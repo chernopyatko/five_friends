@@ -1,0 +1,14 @@
+COMPLETED
+- PHASE A: решения и требования зафиксированы
+- Документация и промпты (PHASE B) — созданы и самопроверены
+- B_LOCKED подтверждён
+- PHASE C: UX аудит (docs‑only) — завершён, расхождений нет
+
+IN PROGRESS
+- (none)
+
+NEXT
+- PHASE D: минимальный runnable skeleton
+
+KNOWN BUGS
+- none
