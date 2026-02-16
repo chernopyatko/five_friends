@@ -1,5 +1,7 @@
 const ROLE_TOKEN_PATTERN = /\b(system|developer|tool|assistant|user)\s*:|<\s*(system|developer|tool|assistant|user)\s*>/gi;
 const URL_PATTERN = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
+const MARKDOWN_ARTIFACT_PATTERN =
+  /(\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|(^|[^*])\*[^*\n]+\*(?!\*)|(^|[^_])_[^_\n]+_(?!_))/gm;
 
 export interface OutputGuardResult {
   text: string;
@@ -46,6 +48,9 @@ export function inspectOutput(text: string): { issues: string[] } {
   if (URL_PATTERN.test(text)) {
     issues.push("URL");
   }
+  if (MARKDOWN_ARTIFACT_PATTERN.test(text)) {
+    issues.push("MARKDOWN_FORMAT");
+  }
   resetRegexState();
   return { issues };
 }
@@ -53,6 +58,7 @@ export function inspectOutput(text: string): { issues: string[] } {
 function repairOutput(text: string): string {
   let repaired = text.replace(ROLE_TOKEN_PATTERN, "");
   repaired = repaired.replace(URL_PATTERN, "");
+  repaired = stripMarkdownArtifacts(repaired);
   resetRegexState();
   return repaired.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -60,4 +66,16 @@ function repairOutput(text: string): string {
 function resetRegexState(): void {
   ROLE_TOKEN_PATTERN.lastIndex = 0;
   URL_PATTERN.lastIndex = 0;
+  MARKDOWN_ARTIFACT_PATTERN.lastIndex = 0;
+}
+
+function stripMarkdownArtifacts(text: string): string {
+  let cleaned = text;
+  cleaned = cleaned.replace(/```(?:\w+)?\n?/g, "");
+  cleaned = cleaned.replace(/`([^`\n]+)`/g, "$1");
+  cleaned = cleaned.replace(/\*\*([^*\n]+)\*\*/g, "$1");
+  cleaned = cleaned.replace(/__([^_\n]+)__/g, "$1");
+  cleaned = cleaned.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/gm, "$1$2");
+  cleaned = cleaned.replace(/(^|[^_])_([^_\n]+)_(?!_)/gm, "$1$2");
+  return cleaned;
 }

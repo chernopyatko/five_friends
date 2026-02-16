@@ -22,4 +22,14 @@ describe("outputGuard", () => {
     expect(result.usedFallback).toBe(true);
     expect(result.text).toBe("Безопасный fallback.");
   });
+
+  it("repairs markdown emphasis markers for plain Telegram text", () => {
+    const result = guardOutputText("Это **важно**, _бережно_ и `по делу`.", "fallback");
+    expect(result.usedFallback).toBe(false);
+    expect(result.repaired).toBe(true);
+    expect(result.text).toContain("Это важно, бережно и по делу.");
+    expect(result.text).not.toContain("**");
+    expect(result.text).not.toContain("_");
+    expect(result.text).not.toContain("`");
+  });
 });
