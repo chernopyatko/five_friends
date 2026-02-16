@@ -17,7 +17,6 @@ type SupportedCommand = (typeof SUPPORTED_COMMANDS)[number];
 const BOT_COMMANDS = [
   { command: "start", description: "Начать и выбрать друга" },
   { command: "help", description: "Подробная помощь по боту" },
-  { command: "friends", description: "Кто в чате" },
   { command: "settings", description: "Открыть настройки" },
   { command: "demo", description: "Показать демо ответов друзей" },
   { command: "privacy", description: "Что хранится и как удалить память" },
@@ -26,6 +25,8 @@ const BOT_COMMANDS = [
 ] as const;
 const STARTUP_RETRY_BASE_MS = 5_000;
 const STARTUP_RETRY_MAX_MS = 60_000;
+const TYPING_INITIAL_DELAY_MS = 300;
+const TYPING_REPEAT_MS = 4_000;
 
 export async function main(): Promise<void> {
   const logger = createLogger();
@@ -78,7 +79,7 @@ export async function main(): Promise<void> {
     }
     const startedAt = Date.now();
     const event = toMessageEvent(ctx);
-    const result = await runtime.processEvent(event);
+    const result = await runWithTypingIndicator(ctx, () => runtime.processEvent(event));
     await sendMessages(ctx, result.messages);
 
     metrics.increment("updates_total");
@@ -101,7 +102,7 @@ export async function main(): Promise<void> {
     }
     const startedAt = Date.now();
     const event = toCallbackEvent(ctx);
-    const result = await runtime.processEvent(event);
+    const result = await runWithTypingIndicator(ctx, () => runtime.processEvent(event));
     await ctx.answerCallbackQuery();
     await sendMessages(ctx, result.messages);
 
@@ -213,6 +214,12 @@ export function parseSupportedCommand(text: string): SupportedCommand | null {
     : null;
 }
 
+export function computeStartupRetryDelay(attempt: number): number {
+  const normalizedAttempt = Number.isFinite(attempt) ? Math.max(1, Math.floor(attempt)) : 1;
+  const exponent = Math.min(10, normalizedAttempt - 1);
+  return Math.min(STARTUP_RETRY_MAX_MS, STARTUP_RETRY_BASE_MS * 2 ** exponent);
+}
+
 async function sendMessages(ctx: Context, messages: OutgoingMessage[]): Promise<void> {
   for (const message of messages) {
     const replyMarkup = message.keyboard
@@ -257,6 +264,52 @@ function toPersistentReplyKeyboard(keyboard: ReplyKeyboard): {
 function hashUserId(userId: number): string {
   const salt = process.env.TELEMETRY_SALT ?? "dev-salt";
   return createHash("sha256").update(`${salt}:${userId}`).digest("hex").slice(0, 16);
+}
+
+interface TypingCapableContext {
+  chat?: { id: number | string };
+  api: {
+    sendChatAction(chatId: number | string, action: "typing"): Promise<unknown>;
+  };
+}
+
+export async function runWithTypingIndicator<T>(
+  ctx: TypingCapableContext,
+  work: () => Promise<T>
+): Promise<T> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) {
+    return work();
+  }
+
+  let interval: NodeJS.Timeout | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+
+  const sendTyping = async (): Promise<void> => {
+    try {
+      await ctx.api.sendChatAction(chatId, "typing");
+    } catch {
+      // Ignore transient Telegram errors for typing action.
+    }
+  };
+
+  timeout = setTimeout(() => {
+    void sendTyping();
+    interval = setInterval(() => {
+      void sendTyping();
+    }, TYPING_REPEAT_MS);
+  }, TYPING_INITIAL_DELAY_MS);
+
+  try {
+    return await work();
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    if (interval) {
+      clearInterval(interval);
+    }
+  }
 }
 
 function toStartupErrorDetails(error: unknown): Record<string, string> {
