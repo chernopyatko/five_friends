@@ -82,6 +82,13 @@ export function forgetConfirmKeyboard(): InlineKeyboard {
   ];
 }
 
+export function resetConfirmKeyboard(): InlineKeyboard {
+  return [
+    [{ text: "🔄 Да, сбросить сессию", data: "reset_confirm_yes" }],
+    [{ text: "↩️ Нет, оставить", data: "reset_confirm_no" }]
+  ];
+}
+
 export function safetyKeyboard(): InlineKeyboard {
   return [
     [{ text: "Мне сейчас небезопасно", data: "safety_yes" }],

@@ -271,4 +271,37 @@ describe("stateMachine", () => {
     expect(confirm.clearLongTerm).toBe(true);
     expect(confirm.messages[0]?.text).toContain("Долгая память удалена");
   });
+
+  it("requires /reset confirmation before session reset", () => {
+    const handlers = new UXHandlers();
+    const ask = handlers.handleEvent({
+      updateId: 1,
+      userId: "u4",
+      command: "/reset"
+    });
+    expect(ask.messages[0]?.text).toContain("Подтверди сброс");
+
+    const cancel = handlers.handleEvent({
+      updateId: 2,
+      userId: "u4",
+      callbackData: "reset_confirm_no"
+    });
+    expect(cancel.sessionReset).toBeUndefined();
+    expect(cancel.messages[0]?.text).toContain("сессию не сбрасываю");
+
+    const askAgain = handlers.handleEvent({
+      updateId: 3,
+      userId: "u4",
+      command: "/reset"
+    });
+    expect(askAgain.messages[0]?.text).toContain("Подтверди сброс");
+
+    const confirm = handlers.handleEvent({
+      updateId: 4,
+      userId: "u4",
+      callbackData: "reset_confirm_yes"
+    });
+    expect(confirm.sessionReset).toBeDefined();
+    expect(confirm.messages[0]?.text).toContain("начнём заново");
+  });
 });

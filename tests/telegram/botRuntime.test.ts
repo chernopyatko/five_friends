@@ -32,7 +32,7 @@ describe("bot runtime hooks", () => {
     expect(calls).toContain("forget:u1");
   });
 
-  it("calls resetSession on /reset", async () => {
+  it("calls resetSession only after reset confirmation", async () => {
     const calls: Array<{ userId: string; previousSessionId: string; newSessionId: string }> = [];
     const runtime = new BotRuntime(new UXHandlers(), {
       async generate() {
@@ -47,6 +47,14 @@ describe("bot runtime hooks", () => {
       updateId: 1,
       userId: "u2",
       command: "/reset"
+    });
+
+    expect(calls).toHaveLength(0);
+
+    await runtime.processEvent({
+      updateId: 2,
+      userId: "u2",
+      callbackData: "reset_confirm_yes"
     });
 
     expect(calls).toHaveLength(1);

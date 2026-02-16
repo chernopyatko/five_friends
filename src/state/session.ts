@@ -16,6 +16,7 @@ export interface UserSessionState {
   pendingMode: PendingMode;
   pendingUserText: string | null;
   pendingForgetConfirmation: boolean;
+  pendingResetConfirmation: boolean;
   lastPersonaBeforePanel: Persona | null;
   sessionId: string;
   sessionStartTs: number;
@@ -41,6 +42,7 @@ export function createInitialSessionState(input: {
     pendingMode: null,
     pendingUserText: null,
     pendingForgetConfirmation: false,
+    pendingResetConfirmation: false,
     lastPersonaBeforePanel: null,
     sessionId: input.sessionId,
     sessionStartTs: now,

@@ -5,6 +5,7 @@ import {
   forgetConfirmKeyboard,
   friendsKeyboard,
   mainReplyKeyboard,
+  resetConfirmKeyboard,
   safetyHoldKeyboard,
   settingsKeyboard,
   startKeyboard,
@@ -48,6 +49,8 @@ const PRIVACY_TEXT =
 const SETTINGS_TEXT = "⚙️ Настройки\nВыбери действие:";
 const FORGET_CONFIRM_TEXT =
   "🧹 Подтверди удаление долгой памяти.\nБот забудет всё, о чём вы говорили ранее (long-term память).";
+const RESET_CONFIRM_TEXT =
+  "🔄 Подтверди сброс текущей сессии.\nБот очистит текущий диалог и pending-состояния. Долгая память не удаляется.";
 const DEMO_TEXT =
   "Пользователь (пример):\n" +
   "«Мне 29. Год тяну с увольнением: платят хорошо, но я выгорел, начальник токсичный, утром ком в животе. Хочу переезд в другую страну, но страшно. Девушка устала от моей “я решусь потом”. Я мечусь: уйти страшно, остаться тоже. Как принять решение и не развалиться?»\n\n" +
@@ -209,6 +212,7 @@ export class UXHandlers {
           ]
         };
       case "/forget":
+        state.pendingResetConfirmation = false;
         state.pendingForgetConfirmation = true;
         return {
           messages: [{ text: FORGET_CONFIRM_TEXT, keyboard: forgetConfirmKeyboard(), replyKeyboard: mainReplyKeyboard() }]
@@ -222,20 +226,16 @@ export class UXHandlers {
           messages: [{ text: DEMO_TEXT, keyboard: demoTryKeyboard() }]
         };
       case "/reset": {
-        const previousSessionId = state.sessionId;
-        this.resetSession(state);
+        state.pendingForgetConfirmation = false;
+        state.pendingResetConfirmation = true;
         return {
           messages: [
             {
-              text: state.currentPersona
-                ? `Ок, начнём заново. Продолжаем с ${personaLabel(state.currentPersona)}.`
-                : "Ок, начнём заново. Кого позвать?",
+              text: RESET_CONFIRM_TEXT,
+              keyboard: resetConfirmKeyboard(),
               replyKeyboard: mainReplyKeyboard()
             }
-          ],
-          sessionReset: {
-            previousSessionId
-          }
+          ]
         };
       }
       default:
@@ -265,7 +265,7 @@ export class UXHandlers {
       }
       state.lastPersonaBeforePanel = state.currentPersona;
       state.pendingMode = "awaiting_panel_input";
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "🤝 Ок. Следующее сообщение разберём вместе. Опиши ситуацию одним сообщением.", replyKeyboard: mainReplyKeyboard() }]
       };
@@ -290,6 +290,40 @@ export class UXHandlers {
     }
 
     if (callbackData === "settings_reset") {
+      this.clearDangerConfirmations(state);
+      state.pendingResetConfirmation = true;
+      return {
+        messages: [
+          {
+            text: RESET_CONFIRM_TEXT,
+            keyboard: resetConfirmKeyboard(),
+            replyKeyboard: mainReplyKeyboard()
+          }
+        ]
+      };
+    }
+
+    if (callbackData === "summary_now") {
+      state.pendingMode = "awaiting_summary_input";
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }]
+      };
+    }
+
+    if (callbackData === "settings_forget") {
+      this.clearDangerConfirmations(state);
+      state.pendingForgetConfirmation = true;
+      return {
+        messages: [{ text: FORGET_CONFIRM_TEXT, keyboard: forgetConfirmKeyboard(), replyKeyboard: mainReplyKeyboard() }]
+      };
+    }
+
+    if (callbackData === "reset_confirm_yes") {
+      if (!state.pendingResetConfirmation) {
+        return { messages: [{ text: "Эта кнопка устарела. Выбери ещё раз." }] };
+      }
+      this.clearDangerConfirmations(state);
       const previousSessionId = state.sessionId;
       this.resetSession(state);
       return {
@@ -307,26 +341,19 @@ export class UXHandlers {
       };
     }
 
-    if (callbackData === "summary_now") {
-      state.pendingMode = "awaiting_summary_input";
-      state.pendingForgetConfirmation = false;
-      return {
-        messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }]
-      };
-    }
-
-    if (callbackData === "settings_forget") {
-      state.pendingForgetConfirmation = true;
-      return {
-        messages: [{ text: FORGET_CONFIRM_TEXT, keyboard: forgetConfirmKeyboard(), replyKeyboard: mainReplyKeyboard() }]
-      };
+    if (callbackData === "reset_confirm_no") {
+      if (!state.pendingResetConfirmation) {
+        return { messages: [{ text: "Эта кнопка устарела. Выбери ещё раз." }] };
+      }
+      this.clearDangerConfirmations(state);
+      return { messages: [{ text: "Ок, сессию не сбрасываю.", replyKeyboard: mainReplyKeyboard() }] };
     }
 
     if (callbackData === "forget_confirm_yes") {
       if (!state.pendingForgetConfirmation) {
         return { messages: [{ text: "Эта кнопка устарела. Выбери ещё раз." }] };
       }
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "Ок, бот забудет всё, о чём вы говорили. Долгая память удалена.", replyKeyboard: mainReplyKeyboard() }],
         clearLongTerm: true
@@ -337,7 +364,7 @@ export class UXHandlers {
       if (!state.pendingForgetConfirmation) {
         return { messages: [{ text: "Эта кнопка устарела. Выбери ещё раз." }] };
       }
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return { messages: [{ text: "Ок, оставляю память как есть.", replyKeyboard: mainReplyKeyboard() }] };
     }
 
@@ -410,7 +437,7 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_panel_input" && innaSelection) {
       state.pendingMode = "awaiting_summary_input";
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }],
         llmTask: undefined
@@ -419,7 +446,7 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_panel_input" && (innaWithPayload || summaryRequested)) {
       state.pendingMode = null;
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📌 Инна — Сводка\nИтого: ...\n- ...\nШаги: ..." }],
         llmTask: {
@@ -435,7 +462,7 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_summary_input") {
       state.pendingMode = null;
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📌 Инна — Сводка\nИтого: ...\n- ...\nШаги: ..." }],
         llmTask: {
@@ -447,7 +474,7 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_panel_input") {
       state.pendingMode = null;
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "Принял. Собираю разбор от всех друзей, это может занять до 20-30 секунд." }],
         llmTask: {
@@ -467,7 +494,7 @@ export class UXHandlers {
     ) {
       state.lastPersonaBeforePanel = state.currentPersona;
       state.pendingMode = "awaiting_panel_input";
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return {
         messages: [
           {
@@ -480,7 +507,7 @@ export class UXHandlers {
 
     if (innaSelection) {
       state.pendingMode = "awaiting_summary_input";
-      state.pendingForgetConfirmation = false;
+      this.clearDangerConfirmations(state);
       return { messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }] };
     }
 
@@ -520,7 +547,7 @@ export class UXHandlers {
   private selectPersona(state: UserSessionState, persona: Persona): OutgoingMessage[] {
     const wasPanelPending = state.pendingMode === "awaiting_panel_input";
     state.pendingMode = null;
-    state.pendingForgetConfirmation = false;
+    this.clearDangerConfirmations(state);
     state.currentPersona = persona;
 
     if (state.pendingUserText) {
@@ -537,6 +564,11 @@ export class UXHandlers {
     }
 
     return [{ text: `Сейчас с тобой ${personaLabel(persona)}.`, replyKeyboard: mainReplyKeyboard() }];
+  }
+
+  private clearDangerConfirmations(state: UserSessionState): void {
+    state.pendingForgetConfirmation = false;
+    state.pendingResetConfirmation = false;
   }
 
   private getOrCreateState(userId: string, now: number): UserSessionState {
