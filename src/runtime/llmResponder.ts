@@ -83,7 +83,12 @@ export class OpenAILLMResponder implements LLMResponder {
     const policy = resolveModelPolicy({
       userText: task.userText,
       state: {
-        pendingMode: task.mode === "PANEL" ? "awaiting_panel_input" : null
+        pendingMode:
+          task.mode === "PANEL"
+            ? "awaiting_panel_input"
+            : task.mode === "SUMMARY"
+              ? "awaiting_summary_input"
+              : null
       },
       routerDecision,
       tokenEstimate: estimateTotalTokens({
@@ -201,7 +206,9 @@ export class OpenAILLMResponder implements LLMResponder {
         confidence: item.confidence,
         sourceSessionId: input.sessionId
       }));
-      this.store.replaceLongTermMemories(input.userId, replacements);
+      if (replacements.length > 0) {
+        this.store.replaceLongTermMemories(input.userId, replacements);
+      }
     } catch {
       // Keep previous memory state on extraction/update errors.
     }

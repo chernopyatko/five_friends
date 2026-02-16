@@ -22,7 +22,7 @@
 
 ## Профиль бота (BotFather)
 - Готовые тексты для `name/about/description` см. в `COPY.md` (раздел `15) BotFather`).
-- Командное меню (`/start`, `/help`, `/friends`, `/settings`, `/demo`, `/privacy`, `/reset`, `/forget`) настраивается автоматически при старте.
+- Командное меню (`/start`, `/help`, `/settings`, `/demo`, `/privacy`, `/reset`, `/forget`) настраивается автоматически при старте.
 
 ## Запуск (dev)
 1) Установить зависимости: `npm install`

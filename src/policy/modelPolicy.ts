@@ -1,7 +1,7 @@
 import type { BotMode } from "../llm/schemas.js";
 import type { RouterDecision } from "../llm/routerSchema.js";
 
-type PendingMode = "awaiting_panel_input" | null;
+type PendingMode = "awaiting_panel_input" | "awaiting_summary_input" | null;
 
 export interface ModelPolicyInput {
   userText: string;
@@ -48,6 +48,17 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
       mode: "PANEL",
       model: "gpt-5.2",
       needsEscalation: true,
+      safetyHold: false,
+      reasons
+    };
+  }
+
+  if (input.state.pendingMode === "awaiting_summary_input") {
+    reasons.push("PENDING_SUMMARY");
+    return {
+      mode: "SUMMARY",
+      model: "gpt-5-mini",
+      needsEscalation: false,
       safetyHold: false,
       reasons
     };

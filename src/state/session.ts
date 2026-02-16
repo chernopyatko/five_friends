@@ -1,5 +1,5 @@
 export type Persona = "yan" | "natasha" | "anya" | "max";
-export type PendingMode = "awaiting_panel_input" | null;
+export type PendingMode = "awaiting_panel_input" | "awaiting_summary_input" | null;
 
 export interface LastModeBeforeSafety {
   currentPersona: Persona | null;

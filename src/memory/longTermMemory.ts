@@ -39,7 +39,7 @@ export function buildLongTermExtractionRequest(input: LongTermExtractInput): Rec
     reasoning: { effort: "high" },
     instructions:
       "Выдели только устойчивые long-term заметки пользователя. " +
-      "Формат JSON-массив объектов: {kind,text,importance,confidence}. " +
+      "Формат JSON-объект: {items:[{kind,text,importance,confidence}]}. " +
       "kind только fact|preference|thread|episode.",
     text: {
       format: {
@@ -47,19 +47,26 @@ export function buildLongTermExtractionRequest(input: LongTermExtractInput): Rec
         name: "long_term_candidates",
         strict: true,
         schema: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "text", "importance", "confidence"],
-            properties: {
-              kind: { type: "string", enum: [...ALLOWED_KINDS] },
-              text: { type: "string", minLength: 1, maxLength: 280 },
-              importance: { type: "number", minimum: 1, maximum: 5 },
-              confidence: { type: "number", minimum: 0, maximum: 1 }
+          type: "object",
+          additionalProperties: false,
+          required: ["items"],
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "text", "importance", "confidence"],
+                properties: {
+                  kind: { type: "string", enum: [...ALLOWED_KINDS] },
+                  text: { type: "string", minLength: 1, maxLength: 280 },
+                  importance: { type: "number", minimum: 1, maximum: 5 },
+                  confidence: { type: "number", minimum: 0, maximum: 1 }
+                }
+              },
+              maxItems: 8
             }
-          },
-          maxItems: 8
+          }
         }
       }
     },
@@ -86,12 +93,8 @@ export async function extractLongTermCandidates(
   const response = await client.responses.create(buildLongTermExtractionRequest(input));
   const text = extractOutputText(response);
   const parsed = JSON.parse(text) as unknown;
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("Long-term extraction response must be an array.");
-  }
-
-  return sanitizeLongTermCandidates(parsed as LongTermCandidate[]);
+  const candidates = normalizeParsedCandidates(parsed);
+  return sanitizeLongTermCandidates(candidates);
 }
 
 export function sanitizeLongTermCandidates(candidates: LongTermCandidate[]): LongTermMemory[] {
@@ -156,4 +159,15 @@ function extractOutputText(response: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeParsedCandidates(parsed: unknown): LongTermCandidate[] {
+  // Backward compatible with legacy array format used in tests/older runs.
+  if (Array.isArray(parsed)) {
+    return parsed as LongTermCandidate[];
+  }
+  if (isRecord(parsed) && Array.isArray(parsed.items)) {
+    return parsed.items as LongTermCandidate[];
+  }
+  throw new Error("Long-term extraction response must be array or {items:[]}");
 }

@@ -22,10 +22,16 @@ export async function runMemoryUpdate(
     recentMessages: input.recentMessages
   });
 
-  const longTerm = await extractLongTermCandidates(client, {
-    rollingSummary,
-    recentMessages: input.recentMessages
-  });
+  let longTerm: LongTermMemory[] = [];
+  try {
+    longTerm = await extractLongTermCandidates(client, {
+      rollingSummary,
+      recentMessages: input.recentMessages
+    });
+  } catch {
+    // Keep rolling summary even if long-term extraction failed for this turn.
+    longTerm = [];
+  }
 
   return {
     rollingSummary,

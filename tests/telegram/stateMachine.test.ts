@@ -25,8 +25,20 @@ describe("stateMachine", () => {
     });
 
     expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Все сразу");
-    expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("📌 Инна");
+    expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("🧠 Ян");
+    expect(result.messages[0]?.replyKeyboard?.[2]?.[1]).toBe("📌 Инна");
     expect(result.messages[0]?.keyboard).toBeUndefined();
+  });
+
+  it("treats /friends as alias to /help", () => {
+    const handlers = new UXHandlers();
+    const result = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-friends-alias",
+      command: "/friends"
+    });
+
+    expect(result.messages[0]?.text).toContain("❓ Как тут всё устроено");
   });
 
   it("processes pending text after friend selection", () => {
@@ -72,6 +84,26 @@ describe("stateMachine", () => {
     expect(result.messages[0]?.text).toContain("Следующее сообщение разберём вместе");
   });
 
+  it("routes Inna to summary even when panel input is pending", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-pending-inna",
+      text: "все сразу"
+    });
+
+    const result = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-pending-inna",
+      text: "📌 Инна о чем мы говорили в последний раз?"
+    });
+
+    expect(result.llmTask?.mode).toBe("SUMMARY");
+    expect(result.state.pendingMode).toBeNull();
+    expect(result.messages[0]?.text).toContain("📌 Инна — Сводка");
+    expect(result.messages[0]?.text).not.toContain("Собираю разбор");
+  });
+
   it("opens friend picker from panel pending flow", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({ updateId: 1, userId: "u1", callbackData: "panel_start" });
@@ -100,7 +132,7 @@ describe("stateMachine", () => {
     expect(result.state.currentPersona).toBe("yan");
   });
 
-  it("runs summary mode from inline Inna button", () => {
+  it("enters pending summary mode from inline Inna button", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -108,11 +140,12 @@ describe("stateMachine", () => {
       callbackData: "summary_now"
     });
 
-    expect(result.llmTask?.mode).toBe("SUMMARY");
-    expect(result.messages[0]?.text).toContain("📌 Инна — Сводка");
+    expect(result.llmTask).toBeUndefined();
+    expect(result.state.pendingMode).toBe("awaiting_summary_input");
+    expect(result.messages[0]?.text).toContain("Сейчас тебя слушает Инна");
   });
 
-  it("runs summary mode from main keyboard Inna quick action", () => {
+  it("enters pending summary mode from main keyboard Inna quick action", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -120,7 +153,27 @@ describe("stateMachine", () => {
       text: "📌 Инна"
     });
 
+    expect(result.llmTask).toBeUndefined();
+    expect(result.state.pendingMode).toBe("awaiting_summary_input");
+    expect(result.messages[0]?.text).toContain("Сейчас тебя слушает Инна");
+  });
+
+  it("runs summary mode after pending Inna and next user message", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-summary-followup",
+      text: "📌 Инна"
+    });
+
+    const result = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-summary-followup",
+      text: "о чем мы говорили в последний раз?"
+    });
+
     expect(result.llmTask?.mode).toBe("SUMMARY");
+    expect(result.state.pendingMode).toBeNull();
     expect(result.messages[0]?.text).toContain("📌 Инна — Сводка");
   });
 
@@ -135,6 +188,24 @@ describe("stateMachine", () => {
     expect(demo.messages[0]?.keyboard?.[0]?.[0]?.text).toBe("🚀 Попробовать также");
     expect(demo.messages[0]?.keyboard?.[0]?.[0]?.data).toBe("panel_start");
     expect(demo.messages[0]?.text).toContain("Пользователь (пример):");
+  });
+
+  it("shows demo from settings inline button", () => {
+    const handlers = new UXHandlers();
+    const settings = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-settings-demo",
+      command: "/settings"
+    });
+    expect(settings.messages[0]?.keyboard?.[1]?.[0]?.data).toBe("settings_demo");
+
+    const demo = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-settings-demo",
+      callbackData: "settings_demo"
+    });
+    expect(demo.messages[0]?.text).toContain("Пользователь (пример):");
+    expect(demo.messages[0]?.keyboard?.[0]?.[0]?.data).toBe("panel_start");
   });
 
   it("enforces per-user queue in bot runtime", async () => {

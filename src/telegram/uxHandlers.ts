@@ -197,7 +197,7 @@ export class UXHandlers {
         };
       case "/friends":
         return {
-          messages: [{ text: "Кто в чате: 🧠 Ян, ❤️ Наташа, 🌀 Аня, 🧱 Макс, 📌 Инна.", replyKeyboard: mainReplyKeyboard() }]
+          messages: [{ text: HELP_TEXT, replyKeyboard: mainReplyKeyboard() }]
         };
       case "/privacy":
         return {
@@ -285,6 +285,10 @@ export class UXHandlers {
       return { messages: [{ text: PRIVACY_TEXT, replyKeyboard: mainReplyKeyboard() }] };
     }
 
+    if (callbackData === "settings_demo") {
+      return { messages: [{ text: DEMO_TEXT, keyboard: demoTryKeyboard() }] };
+    }
+
     if (callbackData === "settings_reset") {
       const previousSessionId = state.sessionId;
       this.resetSession(state);
@@ -304,14 +308,10 @@ export class UXHandlers {
     }
 
     if (callbackData === "summary_now") {
-      state.pendingMode = null;
+      state.pendingMode = "awaiting_summary_input";
       state.pendingForgetConfirmation = false;
       return {
-        messages: [{ text: "📌 Инна — Сводка\nИтого: ...\n- ...\nШаги: ..." }],
-        llmTask: {
-          mode: "SUMMARY",
-          userText: "сводка"
-        }
+        messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }]
       };
     }
 
@@ -375,6 +375,9 @@ export class UXHandlers {
   } {
     const normalized = text.toLowerCase().trim();
     const quickAction = normalizeQuickActionText(text);
+    const innaSelection = quickAction === "инна";
+    const innaWithPayload = quickAction.startsWith("инна ");
+    const summaryRequested = quickAction === "сводка" || quickAction.startsWith("сводка ");
 
     if (state.safetyHold) {
       const crisis = getCrisisResponder();
@@ -403,6 +406,43 @@ export class UXHandlers {
       (quickAction === "все сразу" || quickAction === "совет всех" || quickAction === "позвать всех")
     ) {
       return { messages: [{ text: "Я уже жду сообщение для всех друзей.", replyKeyboard: mainReplyKeyboard() }] };
+    }
+
+    if (state.pendingMode === "awaiting_panel_input" && innaSelection) {
+      state.pendingMode = "awaiting_summary_input";
+      state.pendingForgetConfirmation = false;
+      return {
+        messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }],
+        llmTask: undefined
+      };
+    }
+
+    if (state.pendingMode === "awaiting_panel_input" && (innaWithPayload || summaryRequested)) {
+      state.pendingMode = null;
+      state.pendingForgetConfirmation = false;
+      return {
+        messages: [{ text: "📌 Инна — Сводка\nИтого: ...\n- ...\nШаги: ..." }],
+        llmTask: {
+          mode: "SUMMARY",
+          userText: text
+        }
+      };
+    }
+
+    if (state.pendingMode === "awaiting_summary_input" && innaSelection) {
+      return { messages: [{ text: "Я уже жду сообщение для Инны.", replyKeyboard: mainReplyKeyboard() }] };
+    }
+
+    if (state.pendingMode === "awaiting_summary_input") {
+      state.pendingMode = null;
+      state.pendingForgetConfirmation = false;
+      return {
+        messages: [{ text: "📌 Инна — Сводка\nИтого: ...\n- ...\nШаги: ..." }],
+        llmTask: {
+          mode: "SUMMARY",
+          userText: text
+        }
+      };
     }
 
     if (state.pendingMode === "awaiting_panel_input") {
@@ -438,7 +478,13 @@ export class UXHandlers {
       };
     }
 
-    if (quickAction === "инна" || quickAction === "сводка" || normalized === "сводка") {
+    if (innaSelection) {
+      state.pendingMode = "awaiting_summary_input";
+      state.pendingForgetConfirmation = false;
+      return { messages: [{ text: "📌 Сейчас тебя слушает Инна. Напиши одним сообщением, что разобрать." }] };
+    }
+
+    if (innaWithPayload || summaryRequested || normalized === "сводка") {
       return {
         messages: [{ text: "📌 Инна — Сводка\nИтого: ...\n- ...\nШаги: ..." }],
         llmTask: {

@@ -24,6 +24,8 @@ const BOT_COMMANDS = [
   { command: "reset", description: "Сбросить текущую сессию" },
   { command: "forget", description: "Удалить долгую память" }
 ] as const;
+const STARTUP_RETRY_BASE_MS = 5_000;
+const STARTUP_RETRY_MAX_MS = 60_000;
 
 export async function main(): Promise<void> {
   const logger = createLogger();
@@ -50,7 +52,25 @@ export async function main(): Promise<void> {
 
   const runtime = new BotRuntime(new UXHandlers(), responder);
   const bot = new Bot(botToken);
-  await bot.api.setMyCommands(BOT_COMMANDS);
+  let shuttingDown = false;
+
+  const stopBot = (signal: NodeJS.Signals): void => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    logger.info(
+      toSafeLog({
+        outcome: "shutdown_signal",
+        details: { signal }
+      }),
+      "Received shutdown signal"
+    );
+    bot.stop();
+  };
+
+  process.once("SIGINT", () => stopBot("SIGINT"));
+  process.once("SIGTERM", () => stopBot("SIGTERM"));
 
   bot.on("message:text", async (ctx) => {
     if (!ctx.from || !ctx.message?.text) {
@@ -111,7 +131,47 @@ export async function main(): Promise<void> {
     );
   });
 
-  await bot.start();
+  let startupAttempt = 0;
+  while (!shuttingDown) {
+    try {
+      startupAttempt += 1;
+      await bot.api.setMyCommands(BOT_COMMANDS);
+      await bot.start();
+      startupAttempt = 0;
+    } catch (error) {
+      if (shuttingDown) {
+        break;
+      }
+      const retryDelayMs = computeStartupRetryDelay(startupAttempt);
+      logger.error(
+        toSafeLog({
+          outcome: "startup_retry",
+          details: {
+            attempt: startupAttempt,
+            retryDelayMs,
+            ...toStartupErrorDetails(error)
+          }
+        }),
+        "Bot startup failed, retrying"
+      );
+      await sleep(retryDelayMs);
+      continue;
+    }
+
+    if (!shuttingDown) {
+      const retryDelayMs = computeStartupRetryDelay(startupAttempt || 1);
+      logger.warn(
+        toSafeLog({
+          outcome: "polling_stopped",
+          details: {
+            retryDelayMs
+          }
+        }),
+        "Bot polling stopped unexpectedly, restarting"
+      );
+      await sleep(retryDelayMs);
+    }
+  }
 }
 
 function toMessageEvent(ctx: Context): IncomingEvent {
@@ -197,6 +257,23 @@ function toPersistentReplyKeyboard(keyboard: ReplyKeyboard): {
 function hashUserId(userId: number): string {
   const salt = process.env.TELEMETRY_SALT ?? "dev-salt";
   return createHash("sha256").update(`${salt}:${userId}`).digest("hex").slice(0, 16);
+}
+
+function toStartupErrorDetails(error: unknown): Record<string, string> {
+  if (error instanceof Error) {
+    return {
+      errorName: error.name,
+      errorMessage: error.message
+    };
+  }
+  return {
+    errorName: "unknown",
+    errorMessage: "unknown"
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

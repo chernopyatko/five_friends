@@ -13,6 +13,16 @@ describe("modelPolicy", () => {
     expect(result.model).toBe("gpt-5.2");
   });
 
+  it("routes pending summary state to SUMMARY on gpt-5-mini", () => {
+    const result = resolveModelPolicy({
+      userText: "любой текст",
+      state: { pendingMode: "awaiting_summary_input" }
+    });
+
+    expect(result.mode).toBe("SUMMARY");
+    expect(result.model).toBe("gpt-5-mini");
+  });
+
   it("routes summary trigger to SUMMARY on gpt-5-mini", () => {
     const result = resolveModelPolicy({
       userText: "сводка",

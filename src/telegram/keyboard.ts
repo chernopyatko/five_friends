@@ -55,17 +55,17 @@ export function panelAfterKeyboard(): InlineKeyboard {
 
 export function mainReplyKeyboard(): ReplyKeyboard {
   return [
-    ["🚀 Все сразу", "📌 Инна"],
-    ["🧠 Ян", "❤️ Наташа"],
-    ["🌀 Аня", "🧱 Макс"],
-    ["❓ Помощь", "⚙️ Настройки"],
-    ["🎭 Демо"]
+    ["🚀 Все сразу", "🧠 Ян"],
+    ["❤️ Наташа", "🌀 Аня"],
+    ["🧱 Макс", "📌 Инна"],
+    ["❓ Помощь", "⚙️ Настройки"]
   ];
 }
 
 export function settingsKeyboard(): InlineKeyboard {
   return [
     [{ text: "🔒 Приватность", data: "settings_privacy" }],
+    [{ text: "🎭 Демо", data: "settings_demo" }],
     [{ text: "🔄 Сбросить сессию", data: "settings_reset" }],
     [{ text: "🧹 Забыть всё", data: "settings_forget" }]
   ];

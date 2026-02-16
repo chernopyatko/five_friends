@@ -117,4 +117,85 @@ describe("llm responder persistence", () => {
     expect(store.getSessionById("new-session")).not.toBeNull();
     store.close();
   });
+
+  it("does not wipe existing long-term memories when extractor returns empty", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "five-friends-responder-"));
+    tempDirs.push(dir);
+    const store = new SqliteStore(join(dir, "bot.sqlite"));
+
+    const outputs = [
+      JSON.stringify({
+        requested_mode: "SINGLE",
+        requested_persona: "yan",
+        safety_class: "none",
+        emotional_intensity: "low",
+        needs_escalation: false,
+        confidence: 0.91,
+        reasons: ["DEFAULT_SINGLE"]
+      }),
+      "Первый ответ",
+      "Итого: первая сводка.",
+      JSON.stringify([
+        {
+          kind: "fact",
+          text: "пользователь мужчина",
+          importance: 5,
+          confidence: 0.95
+        }
+      ]),
+      JSON.stringify({
+        requested_mode: "SINGLE",
+        requested_persona: "yan",
+        safety_class: "none",
+        emotional_intensity: "low",
+        needs_escalation: false,
+        confidence: 0.92,
+        reasons: ["DEFAULT_SINGLE"]
+      }),
+      "Второй ответ",
+      "Итого: вторая сводка.",
+      JSON.stringify([])
+    ];
+
+    const fakeClient = {
+      responses: {
+        async create(): Promise<unknown> {
+          const next = outputs.shift();
+          if (!next) {
+            throw new Error("No fake output left.");
+          }
+          return { output_text: next };
+        }
+      }
+    };
+
+    const responder = new OpenAILLMResponder(fakeClient, { store });
+    const state = createInitialSessionState({ sessionId: "session-keep", now: 1000 });
+    state.currentPersona = "yan";
+
+    await responder.generate({
+      userId: "u-keep",
+      task: {
+        mode: "SINGLE",
+        persona: "yan",
+        userText: "первый запрос"
+      },
+      state
+    });
+
+    await responder.generate({
+      userId: "u-keep",
+      task: {
+        mode: "SINGLE",
+        persona: "yan",
+        userText: "второй запрос"
+      },
+      state
+    });
+
+    const memories = store.listLongTermMemories("u-keep", 10);
+    expect(memories).toHaveLength(1);
+    expect(memories[0]?.text).toContain("мужчина");
+    store.close();
+  });
 });
