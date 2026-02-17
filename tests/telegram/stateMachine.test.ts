@@ -24,9 +24,9 @@ describe("stateMachine", () => {
       command: "/start"
     });
 
-    expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Все сразу");
-    expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("🧠 Ян");
-    expect(result.messages[0]?.replyKeyboard?.[2]?.[1]).toBe("📌 Инна");
+    expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Все взгляды");
+    expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("👥 Друзья");
+    expect(result.messages[0]?.replyKeyboard?.[2]?.[0]).toBe("📋 Сводка");
     expect(result.messages[0]?.keyboard).toBeUndefined();
   });
 
@@ -100,7 +100,7 @@ describe("stateMachine", () => {
 
     expect(result.llmTask?.mode).toBe("SUMMARY");
     expect(result.state.pendingMode).toBeNull();
-    expect(result.messages[0]?.text).toContain("📌 Инна — Сводка");
+    expect(result.messages[0]?.text).toContain("Собираю сводку");
     expect(result.messages[0]?.text).not.toContain("Собираю разбор");
   });
 
@@ -132,7 +132,7 @@ describe("stateMachine", () => {
     expect(result.state.currentPersona).toBe("yan");
   });
 
-  it("enters pending summary mode from inline Inna button", () => {
+  it("runs summary immediately from summary inline button", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -140,12 +140,12 @@ describe("stateMachine", () => {
       callbackData: "summary_now"
     });
 
-    expect(result.llmTask).toBeUndefined();
-    expect(result.state.pendingMode).toBe("awaiting_summary_input");
-    expect(result.messages[0]?.text).toContain("Сейчас тебя слушает Инна");
+    expect(result.llmTask?.mode).toBe("SUMMARY");
+    expect(result.state.pendingMode).toBeNull();
+    expect(result.messages[0]?.text).toContain("Собираю сводку");
   });
 
-  it("enters pending summary mode from main keyboard Inna quick action", () => {
+  it("runs summary immediately from legacy Inna quick action", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -153,28 +153,61 @@ describe("stateMachine", () => {
       text: "📌 Инна"
     });
 
-    expect(result.llmTask).toBeUndefined();
-    expect(result.state.pendingMode).toBe("awaiting_summary_input");
-    expect(result.messages[0]?.text).toContain("Сейчас тебя слушает Инна");
+    expect(result.llmTask?.mode).toBe("SUMMARY");
+    expect(result.state.pendingMode).toBeNull();
+    expect(result.messages[0]?.text).toContain("Собираю сводку");
   });
 
-  it("runs summary mode after pending Inna and next user message", () => {
+  it("enters compose pending mode and triggers SINGLE scenario", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({
       updateId: 1,
-      userId: "u-summary-followup",
-      text: "📌 Инна"
+      userId: "u-compose",
+      callbackData: "choose_friend:yan"
     });
 
-    const result = handlers.handleEvent({
+    const pending = handlers.handleEvent({
       updateId: 2,
-      userId: "u-summary-followup",
-      text: "о чем мы говорили в последний раз?"
+      userId: "u-compose",
+      text: "📝 Сформулируй"
+    });
+    expect(pending.state.pendingMode).toBe("awaiting_compose_input");
+
+    const run = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-compose",
+      text: "Нужно написать маме, что не приеду на выходных."
+    });
+    expect(run.llmTask?.mode).toBe("SINGLE");
+    expect(run.llmTask?.persona).toBe("yan");
+    expect(run.llmTask?.scenario).toBe("compose");
+    expect(run.state.pendingMode).toBeNull();
+  });
+
+  it("enters reply pending mode and triggers SINGLE scenario", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-reply",
+      callbackData: "choose_friend:max"
     });
 
-    expect(result.llmTask?.mode).toBe("SUMMARY");
-    expect(result.state.pendingMode).toBeNull();
-    expect(result.messages[0]?.text).toContain("📌 Инна — Сводка");
+    const pending = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-reply",
+      text: "💬 Ответь"
+    });
+    expect(pending.state.pendingMode).toBe("awaiting_reply_input");
+
+    const run = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-reply",
+      text: "Он пишет: «ты меня игнорируешь»."
+    });
+    expect(run.llmTask?.mode).toBe("SINGLE");
+    expect(run.llmTask?.persona).toBe("max");
+    expect(run.llmTask?.scenario).toBe("reply");
+    expect(run.state.pendingMode).toBeNull();
   });
 
   it("shows try button under /demo and routes to panel mode", () => {

@@ -10,9 +10,9 @@ describe("modes", () => {
     expect(output.startsWith("🧠 Ян — Разум")).toBe(true);
   });
 
-  it("formats SUMMARY with Inna header", () => {
+  it("formats SUMMARY with tool header", () => {
     const output = formatSummaryResponse("Итого: ...");
-    expect(output.startsWith("📌 Инна — Сводка")).toBe(true);
+    expect(output.startsWith("📋 Сводка")).toBe(true);
   });
 
   it("validates PANEL format and header order", () => {
@@ -20,21 +20,18 @@ describe("modes", () => {
       "🧠 Ян — Разум\nФакты и шаги.",
       "❤️ Наташа — Сердце\nПоддержка.",
       "🌀 Аня — Смысл\nВыбор и ценности.",
-      "🧱 Макс — Реальность\nПроверка реальности.",
-      "📌 Инна — Сводка\nИтого и шаги."
+      "🧱 Макс — Реальность\nПроверка реальности."
     ].join("\n\n");
 
     const result = validatePanelFormat(validPanel);
     expect(result.valid).toBe(true);
   });
 
-  it("rejects questions in first four PANEL blocks", () => {
+  it("rejects PANEL without required headers", () => {
     const invalidPanel = [
       "🧠 Ян — Разум\nЧто делать дальше?",
       "❤️ Наташа — Сердце\nПоддержка.",
-      "🌀 Аня — Смысл\nВыбор и ценности.",
-      "🧱 Макс — Реальность\nПроверка реальности.",
-      "📌 Инна — Сводка\nИтого и шаги."
+      "🌀 Аня — Смысл\nВыбор и ценности."
     ].join("\n\n");
     expect(validatePanelFormat(invalidPanel).valid).toBe(false);
   });

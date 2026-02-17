@@ -107,4 +107,28 @@ describe("bot runtime hooks", () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0]?.text).toContain("📌 Инна — Сводка");
   });
+
+  it("returns generated SINGLE reply without echo placeholder", async () => {
+    const runtime = new BotRuntime(new UXHandlers(), {
+      async generate() {
+        return [{ text: "🧠 Ян — Разум\nГотовый ответ от модели." }];
+      }
+    });
+
+    await runtime.processEvent({
+      updateId: 1,
+      userId: "u5",
+      callbackData: "choose_friend:yan"
+    });
+
+    const result = await runtime.processEvent({
+      updateId: 2,
+      userId: "u5",
+      text: "мне тревожно"
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.text).toContain("Готовый ответ от модели");
+    expect(result.messages[0]?.text).not.toContain("(Ян)");
+  });
 });

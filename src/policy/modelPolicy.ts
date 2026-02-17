@@ -1,13 +1,15 @@
 import type { BotMode } from "../llm/schemas.js";
 import type { RouterDecision } from "../llm/routerSchema.js";
+import type { PendingMode } from "../state/session.js";
 
-type PendingMode = "awaiting_panel_input" | "awaiting_summary_input" | null;
+type ForcedMode = Extract<BotMode, "PANEL" | "SUMMARY">;
 
 export interface ModelPolicyInput {
   userText: string;
   state: {
     pendingMode: PendingMode;
   };
+  forcedMode?: ForcedMode | null;
   routerDecision?: RouterDecision | null;
   tokenEstimate?: number;
   crisisHeuristicHard?: boolean;
@@ -42,8 +44,8 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     };
   }
 
-  if (input.state.pendingMode === "awaiting_panel_input") {
-    reasons.push("PENDING_PANEL");
+  if (input.forcedMode === "PANEL") {
+    reasons.push("FORCED_PANEL");
     return {
       mode: "PANEL",
       model: "gpt-5.2",
@@ -53,12 +55,23 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     };
   }
 
-  if (input.state.pendingMode === "awaiting_summary_input") {
-    reasons.push("PENDING_SUMMARY");
+  if (input.forcedMode === "SUMMARY") {
+    reasons.push("FORCED_SUMMARY");
     return {
       mode: "SUMMARY",
       model: "gpt-5-mini",
       needsEscalation: false,
+      safetyHold: false,
+      reasons
+    };
+  }
+
+  if (input.state.pendingMode === "awaiting_panel_input") {
+    reasons.push("PENDING_PANEL");
+    return {
+      mode: "PANEL",
+      model: "gpt-5.2",
+      needsEscalation: true,
       safetyHold: false,
       reasons
     };

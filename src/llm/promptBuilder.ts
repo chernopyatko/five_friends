@@ -5,9 +5,11 @@ import {
   assertPromptInput,
   MODE_PROMPT_FILES,
   PERSONA_PROMPT_FILES,
+  TOOL_PROMPT_FILES,
   type BotMode,
   type Persona,
-  type PromptBuildInput
+  type PromptBuildInput,
+  type ToolScenario
 } from "./schemas.js";
 
 const PROMPTS_DIR = join(process.cwd(), "prompts");
@@ -44,8 +46,12 @@ export function getModePrompt(mode: Exclude<BotMode, "SINGLE">): string {
   return readPromptFile(MODE_PROMPT_FILES[mode]);
 }
 
-export function getPersonaPrompt(persona: Exclude<Persona, "inna">): string {
+export function getPersonaPrompt(persona: Persona): string {
   return readPromptFile(PERSONA_PROMPT_FILES[persona]);
+}
+
+export function getToolPrompt(scenario: ToolScenario): string {
+  return readPromptFile(TOOL_PROMPT_FILES[scenario]);
 }
 
 export function buildPromptInstructions(input: PromptBuildInput): string {
@@ -65,11 +71,16 @@ export function buildPromptInstructions(input: PromptBuildInput): string {
   }
 
   // 4) Persona layer (only SINGLE).
-  if (input.mode === "SINGLE" && input.persona && input.persona !== "inna") {
+  if (input.mode === "SINGLE" && input.persona) {
     chunks.push(getPersonaPrompt(input.persona));
   }
 
-  // 5) Untrusted data delimiters.
+  // 5) Tool layer for scenario-driven SINGLE flows.
+  if (input.mode === "SINGLE" && input.toolScenario) {
+    chunks.push(getToolPrompt(input.toolScenario));
+  }
+
+  // 6) Untrusted data delimiters.
   const memory = (input.memoryBlock ?? "").trim();
   chunks.push(`MEMORY_START\n${memory}\nMEMORY_END`);
   chunks.push(`USER_MESSAGE_START\n${input.userMessage.trim()}\nUSER_MESSAGE_END`);

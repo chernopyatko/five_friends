@@ -1,4 +1,4 @@
-const SUMMARY_HEADER = "📌 Инна — Сводка";
+const SUMMARY_HEADER = "📋 Сводка";
 
 export function formatSummaryResponse(body: string): string {
   const normalized = body.trim();

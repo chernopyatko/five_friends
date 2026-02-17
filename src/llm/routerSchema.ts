@@ -29,7 +29,7 @@ export const ROUTER_DECISION_SCHEMA = {
     requested_mode: { type: "string", enum: ["SINGLE", "PANEL", "SUMMARY", "CRISIS"] },
     requested_persona: {
       anyOf: [
-        { type: "string", enum: ["yan", "natasha", "anya", "max", "inna"] },
+        { type: "string", enum: ["yan", "natasha", "anya", "max"] },
         { type: "null" }
       ]
     },
@@ -46,7 +46,7 @@ export const ROUTER_DECISION_SCHEMA = {
 } as const;
 
 const VALID_MODES: readonly BotMode[] = ["SINGLE", "PANEL", "SUMMARY", "CRISIS"];
-const VALID_PERSONAS: readonly Persona[] = ["yan", "natasha", "anya", "max", "inna"];
+const VALID_PERSONAS: readonly Persona[] = ["yan", "natasha", "anya", "max"];
 const VALID_SAFETY_CLASSES: readonly SafetyClass[] = ["none", "soft", "hard"];
 const VALID_EMOTIONAL_INTENSITY: readonly EmotionalIntensity[] = ["low", "medium", "high"];
 

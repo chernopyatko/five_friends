@@ -83,13 +83,9 @@ export class OpenAILLMResponder implements LLMResponder {
     const policy = resolveModelPolicy({
       userText: task.userText,
       state: {
-        pendingMode:
-          task.mode === "PANEL"
-            ? "awaiting_panel_input"
-            : task.mode === "SUMMARY"
-              ? "awaiting_summary_input"
-              : null
+        pendingMode: state.pendingMode
       },
+      forcedMode: task.mode === "PANEL" || task.mode === "SUMMARY" ? task.mode : null,
       routerDecision,
       tokenEstimate: estimateTotalTokens({
         userMessage: task.userText,
@@ -105,6 +101,7 @@ export class OpenAILLMResponder implements LLMResponder {
 
     const effectiveMode = policy.mode;
     const persona = effectiveMode === "SINGLE" ? task.persona : undefined;
+    const toolScenario = effectiveMode === "SINGLE" ? task.scenario ?? null : null;
     if (effectiveMode === "SINGLE" && !persona) {
       return [{ text: formatSingleFallback("yan") }];
     }
@@ -112,6 +109,7 @@ export class OpenAILLMResponder implements LLMResponder {
     const instructions = buildPromptInstructions({
       mode: effectiveMode,
       persona: effectiveMode === "SINGLE" ? persona : null,
+      toolScenario,
       memoryBlock: buildMemoryBlock(memoryState),
       userMessage: task.userText
     });

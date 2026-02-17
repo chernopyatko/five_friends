@@ -13,10 +13,22 @@ describe("modelPolicy", () => {
     expect(result.model).toBe("gpt-5.2");
   });
 
-  it("routes pending summary state to SUMMARY on gpt-5-mini", () => {
+  it("routes forced panel mode to PANEL on gpt-5.2", () => {
     const result = resolveModelPolicy({
       userText: "любой текст",
-      state: { pendingMode: "awaiting_summary_input" }
+      state: { pendingMode: null },
+      forcedMode: "PANEL"
+    });
+
+    expect(result.mode).toBe("PANEL");
+    expect(result.model).toBe("gpt-5.2");
+  });
+
+  it("routes forced summary mode to SUMMARY on gpt-5-mini", () => {
+    const result = resolveModelPolicy({
+      userText: "любой текст",
+      state: { pendingMode: null },
+      forcedMode: "SUMMARY"
     });
 
     expect(result.mode).toBe("SUMMARY");

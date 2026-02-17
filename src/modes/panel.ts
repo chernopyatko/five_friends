@@ -2,8 +2,7 @@ const PANEL_HEADERS = [
   "🧠 Ян — Разум",
   "❤️ Наташа — Сердце",
   "🌀 Аня — Смысл",
-  "🧱 Макс — Реальность",
-  "📌 Инна — Сводка"
+  "🧱 Макс — Реальность"
 ] as const;
 
 export const TELEGRAM_SAFE_LIMIT = 3900;
@@ -24,11 +23,6 @@ export function validatePanelFormat(text: string): { valid: boolean; reason?: st
       return { valid: false, reason: "WRONG_ORDER" };
     }
     cursor = nextIndex + header.length;
-  }
-
-  const preInnaBlock = normalized.split("📌 Инна — Сводка")[0] ?? "";
-  if (/\?/.test(preInnaBlock)) {
-    return { valid: false, reason: "QUESTIONS_IN_PANEL" };
   }
 
   return { valid: true };
