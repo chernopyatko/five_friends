@@ -17,8 +17,8 @@ export function startKeyboard(): InlineKeyboard {
       { text: "🧱 Макс", data: "choose_friend:max" }
     ],
     [
-      { text: "🚀 Все взгляды", data: "panel_start" },
-      { text: "📋 Сводка", data: "summary_now" }
+      { text: "🚀 Спросить всех", data: "panel_start" },
+      { text: "📋 Итоги", data: "summary_now" }
     ]
   ];
 }
@@ -33,7 +33,7 @@ export function friendsKeyboard(): InlineKeyboard {
       { text: "🌀 Позвать Аню", data: "choose_friend:anya" },
       { text: "🧱 Позвать Макса", data: "choose_friend:max" }
     ],
-    [{ text: "🚀 Все взгляды", data: "panel_start" }]
+    [{ text: "🚀 Спросить всех", data: "panel_start" }]
   ];
 }
 
@@ -52,9 +52,9 @@ export function panelAfterKeyboard(): InlineKeyboard {
 
 export function mainReplyKeyboard(): ReplyKeyboard {
   return [
-    ["🚀 Все взгляды", "👥 Друзья"],
-    ["📝 Сформулируй", "💬 Ответь"],
-    ["📋 Сводка", "❓ Помощь"],
+    ["🚀 Спросить всех", "👥 Друзья"],
+    ["📝 Напиши за меня", "💬 Помоги ответить"],
+    ["📋 Итоги", "❓ Помощь"],
     ["⚙️ Настройки"]
   ];
 }
@@ -69,7 +69,7 @@ export function settingsKeyboard(): InlineKeyboard {
 }
 
 export function demoTryKeyboard(): InlineKeyboard {
-  return [[{ text: "🚀 Попробовать также", data: "panel_start" }]];
+  return [[{ text: "🚀 Попробовать тоже", data: "panel_start" }]];
 }
 
 export function forgetConfirmKeyboard(): InlineKeyboard {

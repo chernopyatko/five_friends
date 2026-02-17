@@ -24,9 +24,9 @@ describe("stateMachine", () => {
       command: "/start"
     });
 
-    expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Все взгляды");
+    expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Спросить всех");
     expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("👥 Друзья");
-    expect(result.messages[0]?.replyKeyboard?.[2]?.[0]).toBe("📋 Сводка");
+    expect(result.messages[0]?.replyKeyboard?.[2]?.[0]).toBe("📋 Итоги");
     expect(result.messages[0]?.keyboard).toBeUndefined();
   });
 
@@ -218,7 +218,7 @@ describe("stateMachine", () => {
       command: "/demo"
     });
 
-    expect(demo.messages[0]?.keyboard?.[0]?.[0]?.text).toBe("🚀 Попробовать также");
+    expect(demo.messages[0]?.keyboard?.[0]?.[0]?.text).toBe("🚀 Попробовать тоже");
     expect(demo.messages[0]?.keyboard?.[0]?.[0]?.data).toBe("panel_start");
     expect(demo.messages[0]?.text).toContain("Пользователь (пример):");
   });

@@ -402,10 +402,11 @@ export class UXHandlers {
     const summarySelection =
       quickAction === "сводка" ||
       quickAction === "инна" ||
+      quickAction === "итоги" ||
       quickAction.startsWith("сводка ") ||
       quickAction.startsWith("инна ");
-    const composeSelection = quickAction === "сформулируй";
-    const replySelection = quickAction === "ответь";
+    const composeSelection = quickAction === "сформулируй" || quickAction === "напиши за меня";
+    const replySelection = quickAction === "ответь" || quickAction === "помоги ответить";
     const friendsSelection = quickAction === "друзья";
     const panelRequested = isPanelQuickAction(quickAction, normalized);
 
@@ -702,10 +703,12 @@ function isPanelQuickAction(quickAction: string, normalized: string): boolean {
     quickAction === "все сразу" ||
     quickAction === "совет всех" ||
     quickAction === "позвать всех" ||
+    quickAction === "спросить всех" ||
     normalized === "все взгляды" ||
     normalized === "все сразу" ||
     normalized === "совет всех" ||
-    normalized === "позвать всех"
+    normalized === "позвать всех" ||
+    normalized === "спросить всех"
   );
 }
 
