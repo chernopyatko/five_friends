@@ -462,6 +462,24 @@ export class UXHandlers {
       };
     }
 
+    if (state.pendingMode === "awaiting_panel_input" && composeSelection) {
+      state.pendingMode = "awaiting_compose_input";
+      this.clearDangerConfirmations(state);
+      if (state.currentPersona === null) {
+        return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
+      }
+      return { messages: [{ text: "📝 Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон." }] };
+    }
+
+    if (state.pendingMode === "awaiting_panel_input" && replySelection) {
+      state.pendingMode = "awaiting_reply_input";
+      this.clearDangerConfirmations(state);
+      if (state.currentPersona === null) {
+        return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
+      }
+      return { messages: [{ text: "💬 Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе." }] };
+    }
+
     if (state.pendingMode === "awaiting_compose_input") {
       if (state.currentPersona === null) {
         return { messages: [{ text: "Сначала выбери друга.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
