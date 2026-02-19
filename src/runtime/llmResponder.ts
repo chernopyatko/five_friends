@@ -79,13 +79,14 @@ export class OpenAILLMResponder implements LLMResponder {
       return [{ text: soft.text }];
     }
 
-    const routerDecision = await this.tryRouterDecision(task.userText);
+    const isForcedMode = task.mode === "PANEL" || task.mode === "SUMMARY";
+    const routerDecision = isForcedMode ? null : await this.tryRouterDecision(task.userText);
     const policy = resolveModelPolicy({
       userText: task.userText,
       state: {
         pendingMode: state.pendingMode
       },
-      forcedMode: task.mode === "PANEL" || task.mode === "SUMMARY" ? task.mode : null,
+      forcedMode: isForcedMode ? (task.mode as "PANEL" | "SUMMARY") : null,
       routerDecision,
       tokenEstimate: estimateTotalTokens({
         userMessage: task.userText,
@@ -130,13 +131,13 @@ export class OpenAILLMResponder implements LLMResponder {
       fallback: fallbackText
     });
 
-    await this.persistTurnAndRefreshMemory({
+    this.persistTurnAndRefreshMemory({
       userId,
       sessionId: state.sessionId,
       userText: task.userText,
       assistantText: formatted,
       existingSummary: memoryState.rollingSummary
-    });
+    }).catch(() => {});
 
     return splitMessage(formatted).map((text) => ({ text }));
   }
@@ -192,7 +193,7 @@ export class OpenAILLMResponder implements LLMResponder {
       }));
       const updated = await runMemoryUpdate(this.client, {
         existingSummary: input.existingSummary,
-        recentMessages: refreshedHistory.slice(-10)
+        recentMessages: refreshedHistory.slice(-6)
       });
 
       this.store.updateRollingSummary(input.sessionId, updated.rollingSummary);
