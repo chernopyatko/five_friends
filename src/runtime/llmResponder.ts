@@ -137,7 +137,10 @@ export class OpenAILLMResponder implements LLMResponder {
       userText: task.userText,
       assistantText: formatted,
       existingSummary: memoryState.rollingSummary
-    }).catch(() => {});
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("[memory-update] background refresh failed:", err instanceof Error ? err.message : err);
+    });
 
     return splitMessage(formatted).map((text) => ({ text }));
   }
