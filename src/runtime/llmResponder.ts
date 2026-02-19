@@ -47,6 +47,7 @@ const ROUTER_INSTRUCTIONS = [
 export class OpenAILLMResponder implements LLMResponder {
   private readonly client: OpenAIClient;
   private readonly store: SqliteStore;
+  private readonly memoryChains = new Map<string, Promise<void>>();
 
   constructor(client: OpenAIClient, options: OpenAILLMResponderOptions = {}) {
     this.client = client;
@@ -131,15 +132,12 @@ export class OpenAILLMResponder implements LLMResponder {
       fallback: fallbackText
     });
 
-    this.persistTurnAndRefreshMemory({
+    this.enqueueMemoryUpdate(userId, {
       userId,
       sessionId: state.sessionId,
       userText: task.userText,
       assistantText: formatted,
       existingSummary: memoryState.rollingSummary
-    }).catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn("[memory-update] background refresh failed:", err instanceof Error ? err.message : err);
     });
 
     return splitMessage(formatted).map((text) => ({ text }));
@@ -189,31 +187,41 @@ export class OpenAILLMResponder implements LLMResponder {
     this.store.appendMessage(input.sessionId, "user", input.userText);
     this.store.appendMessage(input.sessionId, "assistant", input.assistantText);
 
-    try {
-      const refreshedHistory = this.store.listSessionMessages(input.sessionId, 12).map((message) => ({
-        role: message.role,
-        text: message.text
-      }));
-      const updated = await runMemoryUpdate(this.client, {
-        existingSummary: input.existingSummary,
-        recentMessages: refreshedHistory.slice(-6)
-      });
+    const refreshedHistory = this.store.listSessionMessages(input.sessionId, 12).map((message) => ({
+      role: message.role,
+      text: message.text
+    }));
+    const updated = await runMemoryUpdate(this.client, {
+      existingSummary: input.existingSummary,
+      recentMessages: refreshedHistory.slice(-6)
+    });
 
-      this.store.updateRollingSummary(input.sessionId, updated.rollingSummary);
-      const replacements: NewMemoryInput[] = updated.longTerm.map((item) => ({
-        userId: input.userId,
-        kind: item.kind,
-        text: item.text,
-        importance: item.importance,
-        confidence: item.confidence,
-        sourceSessionId: input.sessionId
-      }));
-      if (replacements.length > 0) {
-        this.store.replaceLongTermMemories(input.userId, replacements);
-      }
-    } catch {
-      // Keep previous memory state on extraction/update errors.
+    this.store.updateRollingSummary(input.sessionId, updated.rollingSummary);
+    const replacements: NewMemoryInput[] = updated.longTerm.map((item) => ({
+      userId: input.userId,
+      kind: item.kind,
+      text: item.text,
+      importance: item.importance,
+      confidence: item.confidence,
+      sourceSessionId: input.sessionId
+    }));
+    if (replacements.length > 0) {
+      this.store.replaceLongTermMemories(input.userId, replacements);
     }
+  }
+
+  private enqueueMemoryUpdate(userId: string, input: Parameters<OpenAILLMResponder["persistTurnAndRefreshMemory"]>[0]): void {
+    const previous = this.memoryChains.get(userId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(() => this.persistTurnAndRefreshMemory(input));
+    this.memoryChains.set(userId, next);
+    next.catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("[memory-update] background refresh failed:", err instanceof Error ? err.message : err);
+    }).finally(() => {
+      if (this.memoryChains.get(userId) === next) {
+        this.memoryChains.delete(userId);
+      }
+    });
   }
 
   private async tryRouterDecision(userText: string): Promise<RouterDecision | null> {
