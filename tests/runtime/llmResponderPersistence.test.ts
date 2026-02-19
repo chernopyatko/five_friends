@@ -70,7 +70,7 @@ describe("llm responder persistence", () => {
       },
       state
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await responder.drainMemoryUpdates();
 
     expect(generated[0]?.text).toContain("🧠 Ян — Разум");
     expect(store.listSessionMessages("session-1", 20)).toHaveLength(2);
@@ -183,7 +183,7 @@ describe("llm responder persistence", () => {
       },
       state
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await responder.drainMemoryUpdates();
 
     await responder.generate({
       userId: "u-keep",
@@ -194,7 +194,7 @@ describe("llm responder persistence", () => {
       },
       state
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await responder.drainMemoryUpdates();
 
     const memories = store.listLongTermMemories("u-keep", 10);
     expect(memories).toHaveLength(1);

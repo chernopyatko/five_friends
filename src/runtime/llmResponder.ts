@@ -136,8 +136,7 @@ export class OpenAILLMResponder implements LLMResponder {
       userId,
       sessionId: state.sessionId,
       userText: task.userText,
-      assistantText: formatted,
-      existingSummary: memoryState.rollingSummary
+      assistantText: formatted
     });
 
     return splitMessage(formatted).map((text) => ({ text }));
@@ -182,17 +181,17 @@ export class OpenAILLMResponder implements LLMResponder {
     sessionId: string;
     userText: string;
     assistantText: string;
-    existingSummary: string;
   }): Promise<void> {
     this.store.appendMessage(input.sessionId, "user", input.userText);
     this.store.appendMessage(input.sessionId, "assistant", input.assistantText);
 
+    const freshSummary = this.store.getSessionById(input.sessionId)?.rollingSummary ?? "";
     const refreshedHistory = this.store.listSessionMessages(input.sessionId, 12).map((message) => ({
       role: message.role,
       text: message.text
     }));
     const updated = await runMemoryUpdate(this.client, {
-      existingSummary: input.existingSummary,
+      existingSummary: freshSummary,
       recentMessages: refreshedHistory.slice(-6)
     });
 
@@ -208,6 +207,10 @@ export class OpenAILLMResponder implements LLMResponder {
     if (replacements.length > 0) {
       this.store.replaceLongTermMemories(input.userId, replacements);
     }
+  }
+
+  async drainMemoryUpdates(): Promise<void> {
+    await Promise.allSettled([...this.memoryChains.values()]);
   }
 
   private enqueueMemoryUpdate(userId: string, input: Parameters<OpenAILLMResponder["persistTurnAndRefreshMemory"]>[0]): void {
