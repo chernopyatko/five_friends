@@ -158,6 +158,39 @@ describe("stateMachine", () => {
     expect(result.messages[0]?.text).toContain("Собираю сводку");
   });
 
+  it("blocks non-safety callbacks during safety hold and allows safety callbacks", () => {
+    const handlers = new UXHandlers();
+    const entered = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-safety-callbacks",
+      callbackData: "safety_yes"
+    });
+    expect(entered.state.safetyHold).toBe(true);
+
+    const blocked = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-safety-callbacks",
+      callbackData: "panel_start"
+    });
+    expect(blocked.messages[0]?.text).toContain("Мне очень жаль");
+    expect(blocked.state.pendingMode).toBeNull();
+
+    const help = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-safety-callbacks",
+      callbackData: "safety_help"
+    });
+    expect(help.messages[0]?.text).toContain("Выбери страну");
+
+    const resumed = handlers.handleEvent({
+      updateId: 4,
+      userId: "u-safety-callbacks",
+      callbackData: "safety_resume"
+    });
+    expect(resumed.messages[0]?.text).toContain("Ок. Продолжим.");
+    expect(resumed.state.safetyHold).toBe(false);
+  });
+
   it("enters compose pending mode and triggers SINGLE scenario", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({
@@ -182,6 +215,76 @@ describe("stateMachine", () => {
     expect(run.llmTask?.persona).toBe("yan");
     expect(run.llmTask?.scenario).toBe("compose");
     expect(run.state.pendingMode).toBeNull();
+  });
+
+  it("switches compose pending to reply pending on quick action text", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-compose-to-reply",
+      callbackData: "choose_friend:yan"
+    });
+
+    const composePending = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-compose-to-reply",
+      text: "Напиши за меня"
+    });
+    expect(composePending.state.pendingMode).toBe("awaiting_compose_input");
+
+    const switched = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-compose-to-reply",
+      text: "Помоги ответить"
+    });
+    expect(switched.state.pendingMode).toBe("awaiting_reply_input");
+    expect(switched.llmTask).toBeUndefined();
+    expect(switched.messages[0]?.text).toContain("Переключил");
+
+    const runReply = handlers.handleEvent({
+      updateId: 4,
+      userId: "u-compose-to-reply",
+      text: "Она пишет: \"ты меня игнорируешь\"."
+    });
+    expect(runReply.llmTask?.mode).toBe("SINGLE");
+    expect(runReply.llmTask?.persona).toBe("yan");
+    expect(runReply.llmTask?.scenario).toBe("reply");
+    expect(runReply.state.pendingMode).toBeNull();
+  });
+
+  it("switches reply pending to compose pending on quick action text", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-reply-to-compose",
+      callbackData: "choose_friend:max"
+    });
+
+    const replyPending = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-reply-to-compose",
+      text: "💬 Ответь"
+    });
+    expect(replyPending.state.pendingMode).toBe("awaiting_reply_input");
+
+    const switched = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-reply-to-compose",
+      text: "📝 Сформулируй"
+    });
+    expect(switched.state.pendingMode).toBe("awaiting_compose_input");
+    expect(switched.llmTask).toBeUndefined();
+    expect(switched.messages[0]?.text).toContain("Переключил");
+
+    const runCompose = handlers.handleEvent({
+      updateId: 4,
+      userId: "u-reply-to-compose",
+      text: "Напиши менеджеру, что дедлайн сдвигается на два дня."
+    });
+    expect(runCompose.llmTask?.mode).toBe("SINGLE");
+    expect(runCompose.llmTask?.persona).toBe("max");
+    expect(runCompose.llmTask?.scenario).toBe("compose");
+    expect(runCompose.state.pendingMode).toBeNull();
   });
 
   it("enters reply pending mode and triggers SINGLE scenario", () => {

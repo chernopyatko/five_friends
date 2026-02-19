@@ -31,7 +31,6 @@ export interface UserSessionState {
   lastModeBeforeSafety: LastModeBeforeSafety | null;
   lastProcessedUpdateId: number | null;
   rateLimitState: RateLimitState;
-  queueLock: boolean;
 }
 
 export const SESSION_TIMEOUT_MS = 12 * 60 * 60 * 1000;
@@ -59,8 +58,7 @@ export function createInitialSessionState(input: {
     rateLimitState: {
       windowStartTs: now,
       count: 0
-    },
-    queueLock: false
+    }
   };
 }
 

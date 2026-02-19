@@ -21,7 +21,8 @@ const RATE_LIMIT_MAX_MESSAGES = 5;
 const START_TEXT =
   "Четыре AI-друга с разными характерами + инструменты для сложных разговоров.\n" +
   "Главная фишка: 🚀 Все взгляды — один запрос, четыре разных ответа.\n" +
-  "Кого позвать?";
+  "Кого позвать?\n" +
+  "Ответ обычно приходит за 5–15 секунд ⏳";
 const HELP_TEXT =
   "❓ Как тут всё устроено\n" +
   "Это чат с четырьмя друзьями: Ян, Наташа, Аня, Макс. Ты выбираешь друга и пишешь как обычно.\n\n" +
@@ -244,6 +245,17 @@ export class UXHandlers {
       previousSessionId: string;
     };
   } {
+    const isSafetyCallback =
+      callbackData === "safety_yes" ||
+      callbackData === "safety_no" ||
+      callbackData === "safety_resume" ||
+      callbackData === "safety_help" ||
+      callbackData.startsWith("help_country:");
+    if (state.safetyHold && !isSafetyCallback) {
+      const crisis = getCrisisResponder();
+      return { messages: [{ text: crisis.text, keyboard: safetyHoldKeyboard() }] };
+    }
+
     if (callbackData.startsWith("choose_friend:")) {
       const persona = callbackData.split(":")[1] as Persona | undefined;
       if (!persona || !["yan", "natasha", "anya", "max"].includes(persona)) {
@@ -449,6 +461,45 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_reply_input" && replySelection) {
       return { messages: [{ text: "Я уже жду входящее сообщение для инструмента «Ответь».", replyKeyboard: mainReplyKeyboard() }] };
+    }
+
+    if (state.pendingMode === "awaiting_compose_input" && replySelection) {
+      state.pendingMode = "awaiting_reply_input";
+      this.clearDangerConfirmations(state);
+      if (state.currentPersona === null) {
+        return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
+      }
+      return { messages: [{ text: "💬 Переключил. Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе." }] };
+    }
+
+    if (state.pendingMode === "awaiting_reply_input" && composeSelection) {
+      state.pendingMode = "awaiting_compose_input";
+      this.clearDangerConfirmations(state);
+      if (state.currentPersona === null) {
+        return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
+      }
+      return { messages: [{ text: "📝 Переключил. Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон." }] };
+    }
+
+    if ((state.pendingMode === "awaiting_compose_input" || state.pendingMode === "awaiting_reply_input") && summarySelection) {
+      state.pendingMode = null;
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
+        llmTask: {
+          mode: "SUMMARY",
+          userText: "Сделай сводку текущей сессии."
+        }
+      };
+    }
+
+    if ((state.pendingMode === "awaiting_compose_input" || state.pendingMode === "awaiting_reply_input") && panelRequested) {
+      state.lastPersonaBeforePanel = state.currentPersona;
+      state.pendingMode = "awaiting_panel_input";
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{ text: "🤝 Переключил. Следующее сообщение разберём вместе. Опиши ситуацию одним сообщением.", replyKeyboard: mainReplyKeyboard() }]
+      };
     }
 
     if (state.pendingMode === "awaiting_panel_input" && summarySelection) {
