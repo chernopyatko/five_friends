@@ -209,6 +209,7 @@ export class OpenAILLMResponder implements LLMResponder {
     }
   }
 
+  /** Await all currently enqueued memory updates. Does NOT wait for updates added after this call. Intended for tests. */
   async drainMemoryUpdates(): Promise<void> {
     await Promise.allSettled([...this.memoryChains.values()]);
   }
