@@ -4,7 +4,7 @@ const PERSONA_HEADERS: Record<Persona, string> = {
   yan: "🧠 Ян — Разум",
   natasha: "❤️ Наташа — Сердце",
   anya: "🌀 Аня — Смысл",
-  max: "🧱 Макс — Реальность"
+  max: "🎯 Макс — Реальность"
 };
 
 export function formatSingleResponse(persona: Persona, body: string): string {

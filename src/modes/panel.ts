@@ -2,7 +2,7 @@ const PANEL_HEADERS = [
   "🧠 Ян — Разум",
   "❤️ Наташа — Сердце",
   "🌀 Аня — Смысл",
-  "🧱 Макс — Реальность"
+  "🎯 Макс — Реальность"
 ] as const;
 
 export const TELEGRAM_SAFE_LIMIT = 3900;

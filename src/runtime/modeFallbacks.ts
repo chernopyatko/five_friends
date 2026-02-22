@@ -20,7 +20,7 @@ export function formatPanelFallback(): string {
     "🌀 Аня — Смысл",
     "Выбери, что для тебя важнее в этой ситуации, и от этого строй решение.",
     "",
-    "🧱 Макс — Реальность",
+    "🎯 Макс — Реальность",
     "Отделим факты от догадок и сделаем один проверяемый шаг.",
   ].join("\n");
 }
@@ -34,7 +34,7 @@ function personaHeader(persona: Persona): string {
     case "anya":
       return "🌀 Аня — Смысл";
     case "max":
-      return "🧱 Макс — Реальность";
+      return "🎯 Макс — Реальность";
     default:
       return "🧠 Ян — Разум";
   }

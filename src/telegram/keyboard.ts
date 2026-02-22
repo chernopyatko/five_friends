@@ -14,7 +14,7 @@ export function startKeyboard(): InlineKeyboard {
     ],
     [
       { text: "🌀 Аня", data: "choose_friend:anya" },
-      { text: "🧱 Макс", data: "choose_friend:max" }
+      { text: "🎯 Макс", data: "choose_friend:max" }
     ],
     [
       { text: "🚀 Спросить всех", data: "panel_start" },
@@ -31,7 +31,7 @@ export function friendsKeyboard(): InlineKeyboard {
     ],
     [
       { text: "🌀 Позвать Аню", data: "choose_friend:anya" },
-      { text: "🧱 Позвать Макса", data: "choose_friend:max" }
+      { text: "🎯 Позвать Макса", data: "choose_friend:max" }
     ],
     [{ text: "🚀 Спросить всех", data: "panel_start" }]
   ];
@@ -45,7 +45,7 @@ export function panelAfterKeyboard(): InlineKeyboard {
     ],
     [
       { text: "🌀 Продолжить с Аней", data: "choose_friend:anya" },
-      { text: "🧱 Продолжить с Максом", data: "choose_friend:max" }
+      { text: "🎯 Продолжить с Максом", data: "choose_friend:max" }
     ]
   ];
 }
