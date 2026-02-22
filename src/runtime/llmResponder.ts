@@ -132,11 +132,12 @@ export class OpenAILLMResponder implements LLMResponder {
       fallback: fallbackText
     });
 
-    this.enqueueMemoryUpdate(userId, {
+    this.store.appendMessage(state.sessionId, "user", task.userText);
+    this.store.appendMessage(state.sessionId, "assistant", formatted);
+
+    this.enqueueMemoryRefresh(userId, {
       userId,
-      sessionId: state.sessionId,
-      userText: task.userText,
-      assistantText: formatted
+      sessionId: state.sessionId
     });
 
     return splitMessage(formatted).map((text) => ({ text }));
@@ -176,15 +177,10 @@ export class OpenAILLMResponder implements LLMResponder {
     };
   }
 
-  private async persistTurnAndRefreshMemory(input: {
+  private async refreshMemoryOnly(input: {
     userId: string;
     sessionId: string;
-    userText: string;
-    assistantText: string;
   }): Promise<void> {
-    this.store.appendMessage(input.sessionId, "user", input.userText);
-    this.store.appendMessage(input.sessionId, "assistant", input.assistantText);
-
     const freshSummary = this.store.getSessionById(input.sessionId)?.rollingSummary ?? "";
     const refreshedHistory = this.store.listSessionMessages(input.sessionId, 12).map((message) => ({
       role: message.role,
@@ -214,9 +210,9 @@ export class OpenAILLMResponder implements LLMResponder {
     await Promise.allSettled([...this.memoryChains.values()]);
   }
 
-  private enqueueMemoryUpdate(userId: string, input: Parameters<OpenAILLMResponder["persistTurnAndRefreshMemory"]>[0]): void {
+  private enqueueMemoryRefresh(userId: string, input: Parameters<OpenAILLMResponder["refreshMemoryOnly"]>[0]): void {
     const previous = this.memoryChains.get(userId) ?? Promise.resolve();
-    const next = previous.catch(() => {}).then(() => this.persistTurnAndRefreshMemory(input));
+    const next = previous.catch(() => {}).then(() => this.refreshMemoryOnly(input));
     this.memoryChains.set(userId, next);
     next.catch((err) => {
       // eslint-disable-next-line no-console
