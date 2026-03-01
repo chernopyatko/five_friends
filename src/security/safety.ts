@@ -86,7 +86,9 @@ export function getHelpDiscovery(countryCode: HelpCountryCode | null): HelpDisco
       };
     case "KZ":
       return {
-        text: "1414 — контакт-центр; через него доступна психологическая помощь.",
+        text:
+          "111 — единый гос. контакт-центр по вопросам семьи, женщин и детей (24/7).\n" +
+          "150 — национальная линия доверия для детей и молодежи (телефон и WhatsApp: +7 708 106-08-10).",
         needsCountrySelection: false
       };
     case "BY":

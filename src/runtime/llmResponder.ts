@@ -9,6 +9,7 @@ import { formatSummaryResponse } from "../modes/summary.js";
 import { resolveModelPolicy } from "../policy/modelPolicy.js";
 import { guardOutputText } from "../security/outputGuard.js";
 import { classifySafety, getCrisisResponder, getSafetyCheck } from "../security/safety.js";
+import { safetyHoldKeyboard, safetyKeyboard } from "../telegram/keyboard.js";
 import type { UserSessionState } from "../state/session.js";
 import {
   type MemoryKind,
@@ -39,10 +40,15 @@ interface OpenAILLMResponderOptions {
 }
 
 const ROUTER_INSTRUCTIONS = [
-  "Ты router для Telegram-бота друзей.",
-  "Возвращай ТОЛЬКО JSON по схеме.",
-  "Никакого пользовательского текста и объяснений."
-].join(" ");
+  "Ты router для Telegram-бота друзей. Возвращай ТОЛЬКО JSON по схеме. Никакого пользовательского текста и объяснений.",
+  "",
+  "safety_class — СТРОГИЕ критерии:",
+  "- \"hard\" — ТОЛЬКО прямое упоминание суицида, самоповреждения или насилия (\"хочу умереть\", \"покончить с собой\", \"убить\", \"причинить вред\").",
+  "- \"soft\" — отчаяние без конкретной угрозы (\"не хочу жить\", \"я на грани\", \"не вижу смысла\", \"мне небезопасно\").",
+  "- \"none\" — ВСЁ остальное, включая: жалобы на жизнь, стресс, проблемы с работой/деньгами/отношениями, грусть, злость, тревогу. Тяжёлая ситуация ≠ кризис.",
+  "",
+  "ВАЖНО: если сомневаешься между hard/soft и none — выбирай none. Лучше пропустить, чем ложно заблокировать."
+].join("\n");
 
 export class OpenAILLMResponder implements LLMResponder {
   private readonly client: OpenAIClient;
@@ -72,12 +78,13 @@ export class OpenAILLMResponder implements LLMResponder {
     const safety = classifySafety(task.userText);
 
     if (safety === "hard") {
+      state.safetyHold = true;
       const crisis = getCrisisResponder();
-      return [{ text: crisis.text }];
+      return [{ text: crisis.text, keyboard: safetyHoldKeyboard() }];
     }
     if (safety === "soft") {
       const soft = getSafetyCheck();
-      return [{ text: soft.text }];
+      return [{ text: soft.text, keyboard: safetyKeyboard() }];
     }
 
     const isForcedMode = task.mode === "PANEL" || task.mode === "SUMMARY";
@@ -97,8 +104,9 @@ export class OpenAILLMResponder implements LLMResponder {
     });
 
     if (policy.mode === "CRISIS") {
+      state.safetyHold = true;
       const crisis = getCrisisResponder();
-      return [{ text: crisis.text }];
+      return [{ text: crisis.text, keyboard: safetyHoldKeyboard() }];
     }
 
     const effectiveMode = policy.mode;

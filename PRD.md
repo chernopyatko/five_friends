@@ -26,7 +26,7 @@
 
 ## 5) Core modes
 - `SINGLE`: ответ выбранного друга.
-- `PANEL`: ответы 4 друзей (без Инны).
+- `PANEL`: ответы 4 друзей.
 - `SUMMARY`: tool-flow `📋 Сводка`.
 - `CRISIS`: фиксированный safety ответ.
 - `SINGLE+scenario=compose`: инструмент `📝 Сформулируй`.
