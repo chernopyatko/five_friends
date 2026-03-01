@@ -7,6 +7,7 @@ import {
   mainReplyKeyboard,
   resetConfirmKeyboard,
   safetyHoldKeyboard,
+  safetyKeyboard,
   settingsKeyboard,
   startKeyboard,
   type InlineKeyboard,
@@ -640,7 +641,7 @@ export class UXHandlers {
       state.pendingSafetyCheck = true;
       state.pendingUserText = text;
       const safety = getSafetyCheck();
-      return { messages: [{ text: safety.text }] };
+      return { messages: [{ text: safety.text, keyboard: safetyKeyboard() }] };
     }
 
     if (state.currentPersona === null) {
