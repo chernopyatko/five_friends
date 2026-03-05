@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type Database from "better-sqlite3";
 import type { Logger as PinoLogger } from "pino";
@@ -105,10 +105,39 @@ export class ReferralService {
           userId
         }
       },
-      "Unable to generate unique inviter code after all attempts, returning user without code"
+      "Random inviter code retries exhausted, using deterministic fallback from userId"
     );
-    // Return a minimal row so the caller doesn't crash — the user simply won't have a share link.
-    return { user_id: userId, inviter_user_id: null, inviter_code: "", created_at: now };
+    // Deterministic code derived from userId — unique because user_id is unique.
+    const deterministicCode = createHash("sha256").update(userId).digest("base64url").slice(0, 16);
+    try {
+      this.db
+        .prepare<[string, string, number]>(`
+          INSERT INTO users (user_id, inviter_code, created_at)
+          VALUES (?, ?, ?)
+        `)
+        .run(userId, deterministicCode, now);
+      const created = this.getUser(userId);
+      if (created) {
+        return created;
+      }
+    } catch (error) {
+      if (isUserAlreadyExistsError(error)) {
+        const existingUser = this.getUser(userId);
+        if (existingUser) {
+          return existingUser;
+        }
+      }
+      if (isInviterCodeCollision(error)) {
+        // Even the deterministic code collided — theoretically impossible
+        // since user_id is unique, but handle gracefully.
+        this.logger?.error(
+          { outcome: "deterministic_code_collision", details: { userId } },
+          "Deterministic inviter code collided — this should never happen"
+        );
+      }
+      throw error;
+    }
+    throw new Error(`Failed to persist user ${userId} after deterministic fallback`);
   }
 
   getOrCreateInviterCode(userId: string): string {
