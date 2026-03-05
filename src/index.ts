@@ -1,18 +1,21 @@
-import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import OpenAI from "openai";
 import { Bot, type Context } from "grammy";
 
+import { ReferralService } from "./growth/referral.js";
 import { createOpenAIResponsesCompatClient } from "./llm/openaiCompatClient.js";
+import { AnalyticsService } from "./observability/analytics.js";
 import { createLogger, toSafeLog } from "./observability/logger.js";
 import { MetricsCollector } from "./observability/metrics.js";
 import { OpenAILLMResponder } from "./runtime/llmResponder.js";
+import { SqliteStore } from "./state/store.js";
 import { BotRuntime } from "./telegram/bot.js";
 import type { InlineKeyboard, ReplyKeyboard } from "./telegram/keyboard.js";
 import { UXHandlers, type IncomingEvent, type OutgoingMessage } from "./telegram/uxHandlers.js";
+import { hashUserId } from "./utils/hashUserId.js";
 
-const SUPPORTED_COMMANDS = ["/start", "/help", "/friends", "/settings", "/demo", "/reset", "/privacy", "/forget"] as const;
+const SUPPORTED_COMMANDS = ["/start", "/help", "/friends", "/settings", "/demo", "/reset", "/privacy", "/forget", "/stats"] as const;
 type SupportedCommand = (typeof SUPPORTED_COMMANDS)[number];
 const BOT_COMMANDS = [
   { command: "start", description: "Начать и выбрать друга" },
@@ -21,7 +24,8 @@ const BOT_COMMANDS = [
   { command: "demo", description: "Показать демо ответов друзей" },
   { command: "privacy", description: "Что хранится и как удалить память" },
   { command: "reset", description: "Сбросить текущую сессию" },
-  { command: "forget", description: "Удалить долгую память" }
+  { command: "forget", description: "Удалить долгую память" },
+  { command: "stats", description: "Статистика (админ)" }
 ] as const;
 const STARTUP_RETRY_BASE_MS = 5_000;
 const STARTUP_RETRY_MAX_MS = 60_000;
@@ -31,6 +35,13 @@ const TYPING_REPEAT_MS = 4_000;
 export async function main(): Promise<void> {
   const logger = createLogger();
   const metrics = new MetricsCollector();
+  const store = new SqliteStore(process.env.SQLITE_PATH ?? "data/bot.sqlite");
+  const referrals = new ReferralService(store.getDb(), logger);
+  const analytics = new AnalyticsService({
+    db: store.getDb(),
+    logger,
+    httpEndpoint: process.env.ANALYTICS_HTTP_ENDPOINT
+  });
 
   const botToken = process.env.BOT_TOKEN;
   if (!botToken) {
@@ -39,7 +50,10 @@ export async function main(): Promise<void> {
 
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const responder = openaiApiKey
-    ? new OpenAILLMResponder(createOpenAIResponsesCompatClient(new OpenAI({ apiKey: openaiApiKey })))
+    ? new OpenAILLMResponder(createOpenAIResponsesCompatClient(new OpenAI({ apiKey: openaiApiKey })), {
+        store,
+        analytics
+      })
     : undefined;
   if (!responder) {
     logger.warn(
@@ -51,7 +65,21 @@ export async function main(): Promise<void> {
     );
   }
 
-  const runtime = new BotRuntime(new UXHandlers(), responder);
+  const botUsername = process.env.BOT_USERNAME;
+  const runtime = new BotRuntime(
+    new UXHandlers({
+      referrals,
+      analytics,
+      botUsername
+    }),
+    responder,
+    {
+      referrals,
+      analytics,
+      botUsername,
+      logger
+    }
+  );
   const bot = new Bot(botToken);
   let shuttingDown = false;
 
@@ -68,6 +96,7 @@ export async function main(): Promise<void> {
       "Received shutdown signal"
     );
     bot.stop();
+    store.close();
   };
 
   process.once("SIGINT", () => stopBot("SIGINT"));
@@ -177,13 +206,14 @@ export async function main(): Promise<void> {
 
 function toMessageEvent(ctx: Context): IncomingEvent {
   const text = ctx.message?.text ?? "";
-  const command = parseSupportedCommand(text);
+  const parsedCommand = parseSupportedCommand(text);
 
-  if (command) {
+  if (parsedCommand) {
     return {
       updateId: ctx.update.update_id,
       userId: String(ctx.from?.id ?? ""),
-      command
+      command: parsedCommand.command,
+      commandPayload: parsedCommand.payload
     };
   }
 
@@ -202,16 +232,26 @@ function toCallbackEvent(ctx: Context): IncomingEvent {
   };
 }
 
-export function parseSupportedCommand(text: string): SupportedCommand | null {
+export interface ParsedSupportedCommand {
+  command: SupportedCommand;
+  payload?: string;
+}
+
+export function parseSupportedCommand(text: string): ParsedSupportedCommand | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith("/")) {
     return null;
   }
-  const token = trimmed.split(/\s+/, 1)[0] ?? "";
-  const normalized = token.split("@")[0] ?? token;
-  return SUPPORTED_COMMANDS.includes(normalized as SupportedCommand)
-    ? (normalized as SupportedCommand)
-    : null;
+  const [commandToken = "", ...rest] = trimmed.split(/\s+/);
+  const normalizedCommand = commandToken.split("@")[0] ?? commandToken;
+  if (!SUPPORTED_COMMANDS.includes(normalizedCommand as SupportedCommand)) {
+    return null;
+  }
+  const payload = rest.join(" ").trim();
+  return {
+    command: normalizedCommand as SupportedCommand,
+    payload: normalizedCommand === "/start" && payload.length > 0 ? payload : undefined
+  };
 }
 
 export function computeStartupRetryDelay(attempt: number): number {
@@ -236,13 +276,23 @@ async function sendMessages(ctx: Context, messages: OutgoingMessage[]): Promise<
   }
 }
 
-function toInlineReplyMarkup(keyboard: InlineKeyboard): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
+function toInlineReplyMarkup(
+  keyboard: InlineKeyboard
+): { inline_keyboard: Array<Array<{ text: string; callback_data: string } | { text: string; url: string }>> } {
   return {
     inline_keyboard: keyboard.map((row) =>
-      row.map((button) => ({
-        text: button.text,
-        callback_data: button.data
-      }))
+      row.map((button) => {
+        if ("url" in button) {
+          return {
+            text: button.text,
+            url: button.url
+          };
+        }
+        return {
+          text: button.text,
+          callback_data: button.data
+        };
+      })
     )
   };
 }
@@ -259,11 +309,6 @@ function toPersistentReplyKeyboard(keyboard: ReplyKeyboard): {
     is_persistent: true,
     input_field_placeholder: "Напиши сообщение..."
   };
-}
-
-function hashUserId(userId: number): string {
-  const salt = process.env.TELEMETRY_SALT ?? "dev-salt";
-  return createHash("sha256").update(`${salt}:${userId}`).digest("hex").slice(0, 16);
 }
 
 interface TypingCapableContext {

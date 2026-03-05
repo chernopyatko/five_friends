@@ -14,7 +14,10 @@ import {
   type ReplyKeyboard
 } from "./keyboard.js";
 import { CRISIS_RESUME_TEXT, getCrisisResponder, getHelpDiscovery, getSafetyCheck, type HelpCountryCode } from "../security/safety.js";
+import { buildShareLink, formatShareLinkMessage } from "../growth/share.js";
+import type { ReferralService } from "../growth/referral.js";
 import { createInitialSessionState, type Persona, type UserSessionState } from "../state/session.js";
+import type { AnalyticsService } from "../observability/analytics.js";
 import type { BotMode, ToolScenario } from "../llm/schemas.js";
 
 const RATE_LIMIT_WINDOW_MS = 2000;
@@ -85,7 +88,8 @@ export interface IncomingEvent {
   updateId: number;
   userId: string;
   text?: string;
-  command?: "/start" | "/help" | "/friends" | "/reset" | "/privacy" | "/forget" | "/settings" | "/demo";
+  command?: "/start" | "/help" | "/friends" | "/reset" | "/privacy" | "/forget" | "/settings" | "/demo" | "/stats";
+  commandPayload?: string;
   callbackData?: string;
   now?: number;
 }
@@ -115,6 +119,28 @@ export interface LLMTask {
 
 export class UXHandlers {
   private readonly states = new Map<string, UserSessionState>();
+  private readonly referrals?: ReferralService;
+  private readonly analytics?: AnalyticsService;
+  private readonly adminUserIds: Set<string>;
+  private readonly botUsername?: string;
+
+  constructor(input?: {
+    referrals?: ReferralService;
+    analytics?: AnalyticsService;
+    adminUserIds?: Iterable<string>;
+    botUsername?: string;
+  }) {
+    this.referrals = input?.referrals;
+    this.analytics = input?.analytics;
+    this.botUsername = input?.botUsername;
+    this.adminUserIds = new Set(
+      input?.adminUserIds ??
+        (process.env.ADMIN_USER_IDS ?? "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0)
+    );
+  }
 
   handleEvent(event: IncomingEvent): HandleResult {
     const now = event.now ?? Date.now();
@@ -136,7 +162,7 @@ export class UXHandlers {
     }
 
     if (event.command) {
-      const commandResult = this.handleCommand(event.command, state);
+      const commandResult = this.handleCommand(event.command, state, event.userId, event.commandPayload);
       state.lastActivityTs = now;
       return {
         messages: commandResult.messages,
@@ -148,7 +174,7 @@ export class UXHandlers {
     }
 
     if (event.callbackData) {
-      const callbackResult = this.handleCallback(event.callbackData, state);
+      const callbackResult = this.handleCallback(event.callbackData, state, event.userId);
       state.lastActivityTs = now;
       return {
         messages: callbackResult.messages,
@@ -160,7 +186,7 @@ export class UXHandlers {
     }
 
     if (event.text !== undefined) {
-      const messages = this.handleText(event.text, state);
+      const messages = this.handleText(event.text, state, event.userId);
       state.lastActivityTs = now;
       return {
         messages: messages.messages,
@@ -178,7 +204,9 @@ export class UXHandlers {
 
   private handleCommand(
     command: IncomingEvent["command"],
-    state: UserSessionState
+    state: UserSessionState,
+    userId: string,
+    commandPayload?: string
   ): {
     messages: OutgoingMessage[];
     llmTask?: LLMTask;
@@ -188,7 +216,17 @@ export class UXHandlers {
     };
   } {
     switch (command) {
-      case "/start":
+      case "/start": {
+        const referralResult = this.referrals?.applyStartPayload(userId, commandPayload);
+        this.analytics?.emitEvent({
+          event: "start",
+          userId,
+          sessionId: state.sessionId,
+          extra: {
+            has_ref_code: Boolean(commandPayload?.trim().startsWith("ref_")),
+            referral_attributed: referralResult?.attributed ?? false
+          }
+        });
         return {
           messages: [
             {
@@ -197,6 +235,7 @@ export class UXHandlers {
             }
           ]
         };
+      }
       case "/help":
         return {
           messages: [
@@ -233,6 +272,27 @@ export class UXHandlers {
         return {
           messages: [{ text: DEMO_TEXT, keyboard: demoTryKeyboard() }]
         };
+      case "/stats": {
+        if (!this.adminUserIds.has(userId)) {
+          return {
+            messages: [{ text: "Недостаточно прав." }]
+          };
+        }
+        if (!this.analytics) {
+          return {
+            messages: [{ text: "Статистика недоступна." }]
+          };
+        }
+        const stats = this.analytics.getStatsSnapshot();
+        const invited = this.referrals?.countInvitedUsers() ?? 0;
+        return {
+          messages: [
+            {
+              text: formatStatsMessage(stats, invited)
+            }
+          ]
+        };
+      }
       case "/reset": {
         state.pendingForgetConfirmation = false;
         state.pendingResetConfirmation = true;
@@ -251,7 +311,7 @@ export class UXHandlers {
     }
   }
 
-  private handleCallback(callbackData: string, state: UserSessionState): {
+  private handleCallback(callbackData: string, state: UserSessionState, userId: string): {
     messages: OutgoingMessage[];
     llmTask?: LLMTask;
     clearLongTerm?: boolean;
@@ -275,7 +335,28 @@ export class UXHandlers {
       if (!persona || !["yan", "natasha", "anya", "max"].includes(persona)) {
         return { messages: [{ text: "Не понял выбор. Попробуй ещё раз." }] };
       }
+      this.analytics?.emitEvent({
+        event: "choose_persona",
+        userId,
+        sessionId: state.sessionId
+      });
       return { messages: this.selectPersona(state, persona) };
+    }
+
+    if (callbackData === "sh") {
+      if (!this.referrals) {
+        return { messages: [{ text: "Ссылка пока недоступна." }] };
+      }
+      const inviterCode = this.referrals.getOrCreateInviterCode(userId);
+      const share = buildShareLink(this.botUsername, inviterCode);
+      this.analytics?.emitEvent({
+        event: "share_clicked",
+        userId,
+        sessionId: state.sessionId
+      });
+      return {
+        messages: [{ text: formatShareLinkMessage(share.url) }]
+      };
     }
 
     if (callbackData === "panel_start") {
@@ -419,7 +500,7 @@ export class UXHandlers {
     return { messages: [{ text: "Эта кнопка устарела. Выбери ещё раз." }] };
   }
 
-  private handleText(text: string, state: UserSessionState): {
+  private handleText(text: string, state: UserSessionState, userId: string): {
     messages: OutgoingMessage[];
     llmTask?: LLMTask;
   } {
@@ -640,6 +721,11 @@ export class UXHandlers {
     if (safetyClass === "soft") {
       state.pendingSafetyCheck = true;
       state.pendingUserText = text;
+      this.analytics?.emitEvent({
+        event: "safety_triggered",
+        userId,
+        sessionId: state.sessionId
+      });
       const safety = getSafetyCheck();
       return { messages: [{ text: safety.text, keyboard: safetyKeyboard() }] };
     }
@@ -800,4 +886,60 @@ function maybeSoftSafety(text: string): "soft" | "none" {
     return "soft";
   }
   return "none";
+}
+
+function formatStatsMessage(
+  stats: {
+    todayDate: string;
+    today: {
+      starts: number;
+      askAll: number;
+      toolWrite: number;
+      toolReply: number;
+      toolSummary: number;
+      shareClicked: number;
+      modelError: number;
+      safetyTriggered: number;
+    };
+    sevenDays: {
+      starts: number;
+      askAll: number;
+      shareClicked: number;
+    };
+  },
+  invitedUsersTotal: number
+): string {
+  const activationToday = formatRatio(stats.today.askAll, stats.today.starts);
+  const shareToday = formatRatio(stats.today.shareClicked, stats.today.askAll);
+  const activation7d = formatRatio(stats.sevenDays.askAll, stats.sevenDays.starts);
+  const share7d = formatRatio(stats.sevenDays.shareClicked, stats.sevenDays.askAll);
+
+  return (
+    "📊 Статистика\n\n" +
+    `Сегодня (${stats.todayDate}):\n` +
+    `• starts: ${stats.today.starts}\n` +
+    `• ask_all: ${stats.today.askAll}\n` +
+    `• tools: write ${stats.today.toolWrite} / reply ${stats.today.toolReply} / summary ${stats.today.toolSummary}\n` +
+    `• share_clicked: ${stats.today.shareClicked}\n` +
+    `• model_error: ${stats.today.modelError}\n` +
+    `• safety_triggered: ${stats.today.safetyTriggered}\n\n` +
+    "7 дней:\n" +
+    `• starts: ${stats.sevenDays.starts}\n` +
+    `• ask_all: ${stats.sevenDays.askAll}\n` +
+    `• share_clicked: ${stats.sevenDays.shareClicked}\n\n` +
+    "Конверсии:\n" +
+    `• activation today: ${activationToday} (ask_all/starts)\n` +
+    `• share rate today: ${shareToday} (share/ask_all)\n` +
+    `• activation 7d: ${activation7d}\n` +
+    `• share rate 7d: ${share7d}\n\n` +
+    "Рефералы:\n" +
+    `• всего приглашённых: ${invitedUsersTotal}`
+  );
+}
+
+function formatRatio(numerator: number, denominator: number): string {
+  if (denominator <= 0) {
+    return "—";
+  }
+  return `${((numerator / denominator) * 100).toFixed(1)}%`;
 }

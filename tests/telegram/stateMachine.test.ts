@@ -1,7 +1,43 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { afterEach, describe, expect, it } from "vitest";
+
+import { ReferralService } from "../../src/growth/referral.js";
+import { AnalyticsService } from "../../src/observability/analytics.js";
+import { SqliteStore } from "../../src/state/store.js";
 import { BotRuntime } from "../../src/telegram/bot.js";
 import { UXHandlers } from "../../src/telegram/uxHandlers.js";
+
+const tempDirs: string[] = [];
+const stores: SqliteStore[] = [];
+
+afterEach(() => {
+  for (const store of stores) {
+    store.close();
+  }
+  stores.length = 0;
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs.length = 0;
+});
+
+function createGrowthEnabledHandlers(): UXHandlers {
+  const dir = mkdtempSync(join(tmpdir(), "five-friends-growth-sm-"));
+  tempDirs.push(dir);
+  const store = new SqliteStore(join(dir, "bot.sqlite"));
+  stores.push(store);
+  const db = store.getDb();
+  const referrals = new ReferralService(db);
+  const analytics = new AnalyticsService({ db });
+  return new UXHandlers({
+    referrals,
+    analytics,
+    adminUserIds: ["admin-user"]
+  });
+}
 
 describe("stateMachine", () => {
   it("stores pending text when no friend selected", () => {
@@ -322,7 +358,8 @@ describe("stateMachine", () => {
     });
 
     expect(demo.messages[0]?.keyboard?.[0]?.[0]?.text).toBe("🚀 Попробовать тоже");
-    expect(demo.messages[0]?.keyboard?.[0]?.[0]?.data).toBe("panel_start");
+    const demoTry = demo.messages[0]?.keyboard?.[0]?.[0];
+    expect(demoTry && "data" in demoTry ? demoTry.data : null).toBe("panel_start");
     expect(demo.messages[0]?.text).toContain("Пользователь (пример):");
   });
 
@@ -333,7 +370,8 @@ describe("stateMachine", () => {
       userId: "u-settings-demo",
       command: "/settings"
     });
-    expect(settings.messages[0]?.keyboard?.[1]?.[0]?.data).toBe("settings_demo");
+    const settingsDemo = settings.messages[0]?.keyboard?.[1]?.[0];
+    expect(settingsDemo && "data" in settingsDemo ? settingsDemo.data : null).toBe("settings_demo");
 
     const demo = handlers.handleEvent({
       updateId: 2,
@@ -341,7 +379,8 @@ describe("stateMachine", () => {
       callbackData: "settings_demo"
     });
     expect(demo.messages[0]?.text).toContain("Пользователь (пример):");
-    expect(demo.messages[0]?.keyboard?.[0]?.[0]?.data).toBe("panel_start");
+    const demoTry = demo.messages[0]?.keyboard?.[0]?.[0];
+    expect(demoTry && "data" in demoTry ? demoTry.data : null).toBe("panel_start");
   });
 
   it("enforces per-user queue in bot runtime", async () => {
@@ -439,5 +478,58 @@ describe("stateMachine", () => {
     });
     expect(confirm.sessionReset).toBeDefined();
     expect(confirm.messages[0]?.text).toContain("начнём заново");
+  });
+
+  it("accepts /start payload and attributes inviter once", () => {
+    const handlers = createGrowthEnabledHandlers();
+
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "inviter",
+      command: "/start"
+    });
+    const inviterShare = handlers.handleEvent({
+      updateId: 2,
+      userId: "inviter",
+      callbackData: "sh"
+    });
+    const link = inviterShare.messages[0]?.text.split("\n")[1] ?? "";
+    const refCode = (link.match(/start=ref_([^&\s]+)/)?.[1] ?? "").trim();
+    expect(refCode.length).toBeGreaterThan(0);
+
+    const first = handlers.handleEvent({
+      updateId: 3,
+      userId: "invitee",
+      command: "/start",
+      commandPayload: `ref_${refCode}`
+    });
+    expect(first.messages[0]?.text).toContain("Привет! Это бот");
+
+    const second = handlers.handleEvent({
+      updateId: 4,
+      userId: "invitee",
+      command: "/start",
+      commandPayload: `ref_${refCode}`
+    });
+    expect(second.messages[0]?.text).toContain("Привет! Это бот");
+  });
+
+  it("restricts /stats to admins", () => {
+    const handlers = createGrowthEnabledHandlers();
+
+    const denied = handlers.handleEvent({
+      updateId: 1,
+      userId: "not-admin",
+      command: "/stats"
+    });
+    expect(denied.messages[0]?.text).toContain("Недостаточно прав");
+
+    const allowed = handlers.handleEvent({
+      updateId: 2,
+      userId: "admin-user",
+      command: "/stats"
+    });
+    expect(allowed.messages[0]?.text).toContain("📊 Статистика");
+    expect(allowed.messages[0]?.text).toContain("Конверсии");
   });
 });

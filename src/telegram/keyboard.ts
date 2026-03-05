@@ -1,8 +1,14 @@
-export interface InlineButton {
+export interface InlineCallbackButton {
   text: string;
   data: string;
 }
 
+export interface InlineUrlButton {
+  text: string;
+  url: string;
+}
+
+export type InlineButton = InlineCallbackButton | InlineUrlButton;
 export type InlineKeyboard = InlineButton[][];
 export type ReplyKeyboard = string[][];
 
@@ -105,5 +111,12 @@ export function helpCountryKeyboard(): InlineKeyboard {
     { text: "KZ", data: "help_country:KZ" },
     { text: "BY", data: "help_country:BY" },
     { text: "Другая", data: "help_country:OTHER" }
+  ]];
+}
+
+export function shareKeyboard(link: string): InlineKeyboard {
+  return [[
+    { text: "Поделиться ботом", url: link },
+    { text: "Получить ссылку", data: "sh" }
   ]];
 }

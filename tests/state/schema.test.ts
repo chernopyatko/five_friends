@@ -39,6 +39,8 @@ describe("state schema", () => {
     expect(tableNames.has("sessions")).toBe(true);
     expect(tableNames.has("messages")).toBe(true);
     expect(tableNames.has("memories")).toBe(true);
+    expect(tableNames.has("users")).toBe(true);
+    expect(tableNames.has("event_daily")).toBe(true);
 
     store.close();
   });

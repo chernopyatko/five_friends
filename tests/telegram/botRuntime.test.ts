@@ -1,7 +1,40 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { afterEach, describe, expect, it } from "vitest";
+
+import { ReferralService } from "../../src/growth/referral.js";
+import { AnalyticsService } from "../../src/observability/analytics.js";
+import { SqliteStore } from "../../src/state/store.js";
 import { BotRuntime } from "../../src/telegram/bot.js";
 import { UXHandlers } from "../../src/telegram/uxHandlers.js";
+
+const tempDirs: string[] = [];
+const stores: SqliteStore[] = [];
+
+afterEach(() => {
+  for (const store of stores) {
+    store.close();
+  }
+  stores.length = 0;
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs.length = 0;
+});
+
+function createGrowthDeps() {
+  const dir = mkdtempSync(join(tmpdir(), "five-friends-botruntime-"));
+  tempDirs.push(dir);
+  const store = new SqliteStore(join(dir, "bot.sqlite"));
+  stores.push(store);
+  const db = store.getDb();
+  return {
+    referrals: new ReferralService(db),
+    analytics: new AnalyticsService({ db })
+  };
+}
 
 describe("bot runtime hooks", () => {
   it("calls clearLongTerm only after forget confirmation", async () => {
@@ -130,5 +163,51 @@ describe("bot runtime hooks", () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0]?.text).toContain("Готовый ответ от модели");
     expect(result.messages[0]?.text).not.toContain("(Ян)");
+  });
+
+  it("appends share prompt after compose flow", async () => {
+    const deps = createGrowthDeps();
+    const runtime = new BotRuntime(
+      new UXHandlers({
+        referrals: deps.referrals,
+        analytics: deps.analytics
+      }),
+      {
+        async generate() {
+          return [{ text: "🧠 Ян — Разум\nЧерновик готов." }];
+        }
+      },
+      {
+        referrals: deps.referrals,
+        analytics: deps.analytics,
+        botUsername: "my_test_bot"
+      }
+    );
+
+    await runtime.processEvent({
+      updateId: 1,
+      userId: "u-share",
+      callbackData: "choose_friend:yan"
+    });
+    await runtime.processEvent({
+      updateId: 2,
+      userId: "u-share",
+      text: "Напиши за меня"
+    });
+
+    const result = await runtime.processEvent({
+      updateId: 3,
+      userId: "u-share",
+      text: "Нужно написать коллеге про перенос встречи."
+    });
+
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[1]?.text).toBe("Что дальше?");
+    expect(result.messages[1]?.keyboard?.[0]?.[0]).toMatchObject({
+      text: "Поделиться ботом"
+    });
+    expect(result.messages[1]?.keyboard?.[0]?.[1]).toMatchObject({
+      data: "sh"
+    });
   });
 });

@@ -4,11 +4,22 @@ import { parseSupportedCommand, runWithTypingIndicator } from "../src/index.js";
 
 describe("index command parsing", () => {
   it("parses supported commands", () => {
-    expect(parseSupportedCommand("/start")).toBe("/start");
-    expect(parseSupportedCommand("/friends@mybot")).toBe("/friends");
-    expect(parseSupportedCommand("/reset now")).toBe("/reset");
-    expect(parseSupportedCommand("/settings")).toBe("/settings");
-    expect(parseSupportedCommand("/demo")).toBe("/demo");
+    expect(parseSupportedCommand("/start")).toEqual({ command: "/start", payload: undefined });
+    expect(parseSupportedCommand("/friends@mybot")).toEqual({ command: "/friends", payload: undefined });
+    expect(parseSupportedCommand("/reset now")).toEqual({ command: "/reset", payload: undefined });
+    expect(parseSupportedCommand("/settings")).toEqual({ command: "/settings", payload: undefined });
+    expect(parseSupportedCommand("/demo")).toEqual({ command: "/demo", payload: undefined });
+  });
+
+  it("extracts /start payload for deep links", () => {
+    expect(parseSupportedCommand("/start ref_abc123")).toEqual({
+      command: "/start",
+      payload: "ref_abc123"
+    });
+    expect(parseSupportedCommand("/start@mybot ref_abc123")).toEqual({
+      command: "/start",
+      payload: "ref_abc123"
+    });
   });
 
   it("returns null for unsupported commands or plain text", () => {

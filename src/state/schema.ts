@@ -48,6 +48,23 @@ export function initSchema(db: Database): void {
       ON memories(user_id, kind);
     CREATE INDEX IF NOT EXISTS memories_user_status_idx
       ON memories(user_id, status);
+
+    CREATE TABLE IF NOT EXISTS users (
+      user_id TEXT PRIMARY KEY,
+      inviter_user_id TEXT,
+      inviter_code TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS users_inviter_user_id_idx
+      ON users(inviter_user_id);
+
+    CREATE TABLE IF NOT EXISTS event_daily (
+      date TEXT NOT NULL,
+      event TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (date, event)
+    );
   `);
 }
 

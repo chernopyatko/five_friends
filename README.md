@@ -14,6 +14,10 @@
 - `BOT_TOKEN`
 - `OPENAI_API_KEY`
 - `TELEMETRY_SALT`
+- `SQLITE_PATH` (опционально; по умолчанию `data/bot.sqlite`)
+- `BOT_USERNAME` (опционально; нужен для корректной share-ссылки)
+- `ANALYTICS_HTTP_ENDPOINT` (опционально; HTTP-forward аналитики)
+- `ADMIN_USER_IDS` (опционально; CSV Telegram user_id для `/stats`)
 - `LOG_LEVEL`
 - `DEBUG_LOG_TEXT` (локально; по умолчанию 0)
 - `METRICS_ENABLED`
@@ -51,6 +55,14 @@
 7) Soft‑safety → SafetyCheck + resume.
 8) Hard‑safety → CrisisResponder + кнопки «Найти помощь/Я в безопасности».
 9) `/forget` → показывается подтверждение, затем удаляется long‑term память.
+10) Реферал: `/start ref_<code>` c другого аккаунта → атрибуция в `users.inviter_user_id`.
+11) После `🚀 Спросить всех`/`📝`/`💬`/`📋` появляется share-блок `Что дальше?` с deep-link.
+12) `/stats` у админа показывает агрегаты, у не-админа ответ `Недостаточно прав.`
+
+Пример analytics события в stdout:
+```json
+{"analytics_event":{"event":"start","ts":"2026-03-05T08:00:00.000Z","session_id":"...","user_id_hash":"...","inviter_present":false,"has_ref_code":false}}
+```
 
 ## Деплой (MVP)
 - Polling на VPS, **один инстанс**.

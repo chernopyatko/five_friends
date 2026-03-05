@@ -20,6 +20,7 @@ import type { LLMResponder } from "../telegram/bot.js";
 import type { LLMTask, OutgoingMessage } from "../telegram/uxHandlers.js";
 import { estimateTotalTokens } from "../utils/tokenCount.js";
 import { formatPanelFallback, formatSingleFallback, formatSummaryFallback } from "./modeFallbacks.js";
+import type { AnalyticsService } from "../observability/analytics.js";
 
 type OpenAIClient = RouterApiClient & GeneratorApiClient;
 
@@ -37,6 +38,7 @@ interface MemoryState {
 interface OpenAILLMResponderOptions {
   store?: SqliteStore;
   dbPath?: string;
+  analytics?: AnalyticsService;
 }
 
 const ROUTER_INSTRUCTIONS = [
@@ -53,11 +55,13 @@ const ROUTER_INSTRUCTIONS = [
 export class OpenAILLMResponder implements LLMResponder {
   private readonly client: OpenAIClient;
   private readonly store: SqliteStore;
+  private readonly analytics?: AnalyticsService;
   private readonly memoryChains = new Map<string, Promise<void>>();
 
   constructor(client: OpenAIClient, options: OpenAILLMResponderOptions = {}) {
     this.client = client;
     this.store = options.store ?? new SqliteStore(options.dbPath ?? process.env.SQLITE_PATH ?? "data/bot.sqlite");
+    this.analytics = options.analytics;
   }
 
   async generate(input: {
@@ -79,10 +83,20 @@ export class OpenAILLMResponder implements LLMResponder {
 
     if (safety === "hard") {
       state.safetyHold = true;
+      this.analytics?.emitEvent({
+        event: "safety_triggered",
+        userId,
+        sessionId: state.sessionId
+      });
       const crisis = getCrisisResponder();
       return [{ text: crisis.text, keyboard: safetyHoldKeyboard() }];
     }
     if (safety === "soft") {
+      this.analytics?.emitEvent({
+        event: "safety_triggered",
+        userId,
+        sessionId: state.sessionId
+      });
       const soft = getSafetyCheck();
       return [{ text: soft.text, keyboard: safetyKeyboard() }];
     }
@@ -105,6 +119,11 @@ export class OpenAILLMResponder implements LLMResponder {
 
     if (policy.mode === "CRISIS") {
       state.safetyHold = true;
+      this.analytics?.emitEvent({
+        event: "safety_triggered",
+        userId,
+        sessionId: state.sessionId
+      });
       const crisis = getCrisisResponder();
       return [{ text: crisis.text, keyboard: safetyHoldKeyboard() }];
     }

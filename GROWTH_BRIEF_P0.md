@@ -29,7 +29,7 @@ Everything else is explicitly out of scope.
 - Minimal invasive changes: no refactors, no architecture rewrites.
 - No new product features besides referral/share/analytics/stats.
 - Do NOT store user message texts. Do NOT send raw Telegram user_id to external analytics.
-- Analytics must be optional on transport: bot must run with HTTP analytics disabled.
+- Analytics transport: stdout logging is always on; optional HTTP forwarding is enabled only when `ANALYTICS_HTTP_ENDPOINT` is set.
 - Do NOT add paid infra. Default telemetry transport is stdout JSON logs.
 - Do NOT add new dependencies without explicit approval.
 - Follow existing conventions: ESM `.js` imports, existing folder structure, `SqliteStore` pattern.
