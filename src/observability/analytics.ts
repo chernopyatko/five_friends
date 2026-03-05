@@ -53,6 +53,7 @@ interface AnalyticsPayload {
   [key: string]: string | number | boolean | null | undefined;
 }
 
+const RESERVED_PAYLOAD_KEYS = new Set(["event", "ts", "session_id", "user_id_hash", "inviter_present"]);
 const HTTP_TIMEOUT_MS = 1500;
 
 export class AnalyticsService {
@@ -81,7 +82,9 @@ export class AnalyticsService {
     };
     if (input.extra) {
       for (const [key, value] of Object.entries(input.extra)) {
-        payload[key] = value;
+        if (!RESERVED_PAYLOAD_KEYS.has(key)) {
+          payload[key] = value;
+        }
       }
     }
 
@@ -161,7 +164,7 @@ export class AnalyticsService {
     const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
     try {
-      await fetch(this.httpEndpoint, {
+      const response = await fetch(this.httpEndpoint, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -169,6 +172,17 @@ export class AnalyticsService {
         body: JSON.stringify(payload),
         signal: controller.signal
       });
+      if (!response.ok) {
+        this.logger.warn(
+          {
+            outcome: "analytics_http_error",
+            details: {
+              status: response.status
+            }
+          },
+          "Analytics HTTP forward returned non-OK status"
+        );
+      }
     } catch (error) {
       this.logger.warn(
         {

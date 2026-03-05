@@ -73,6 +73,8 @@ export class BotRuntime {
       return result;
     }
     if (!this.responder) {
+      // Intentionally no model_error emit: missing responder is a config issue
+      // already logged at startup (startup_without_llm), not a per-message error.
       return withGenerationFailure(result);
     }
 

@@ -15,7 +15,7 @@
 - `OPENAI_API_KEY`
 - `TELEMETRY_SALT`
 - `SQLITE_PATH` (опционально; по умолчанию `data/bot.sqlite`)
-- `BOT_USERNAME` (опционально; нужен для корректной share-ссылки)
+- `BOT_USERNAME` (рекомендуется; без него share-ссылки работают в degraded-режиме с placeholder)
 - `ANALYTICS_HTTP_ENDPOINT` (опционально; HTTP-forward аналитики)
 - `ADMIN_USER_IDS` (опционально; CSV Telegram user_id для `/stats`)
 - `LOG_LEVEL`

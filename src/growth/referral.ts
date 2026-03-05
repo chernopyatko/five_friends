@@ -98,7 +98,17 @@ export class ReferralService {
       }
     }
 
-    throw new Error("Unable to generate unique inviter code after fallback attempts.");
+    this.logger?.warn(
+      {
+        outcome: "referral_code_fallback_exhausted",
+        details: {
+          userId
+        }
+      },
+      "Unable to generate unique inviter code after all attempts, returning user without code"
+    );
+    // Return a minimal row so the caller doesn't crash — the user simply won't have a share link.
+    return { user_id: userId, inviter_user_id: null, inviter_code: "", created_at: now };
   }
 
   getOrCreateInviterCode(userId: string): string {
