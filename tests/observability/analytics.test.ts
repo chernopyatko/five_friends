@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyticsService } from "../../src/observability/analytics.js";
 import { SqliteStore } from "../../src/state/store.js";
@@ -84,19 +84,14 @@ describe("analytics service", () => {
       }
     } as never;
 
-    const { createServer } = await import("node:http");
-    const server = createServer((_req, res) => {
-      res.writeHead(500);
-      res.end();
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const addr = server.address() as { port: number };
-    const endpoint = `http://127.0.0.1:${addr.port}`;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 500 })
+    );
 
     const analytics = new AnalyticsService({
       db: store.getDb(),
       logger,
-      httpEndpoint: endpoint
+      httpEndpoint: "http://mock-endpoint.test"
     });
 
     analytics.emitEvent({
@@ -106,8 +101,8 @@ describe("analytics service", () => {
     });
 
     // Wait for the async HTTP call to complete
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    server.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    fetchSpy.mockRestore();
 
     const warnEntry = warnings.find(
       (w) => (w as { outcome?: string }).outcome === "analytics_http_error"
