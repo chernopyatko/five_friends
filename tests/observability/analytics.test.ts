@@ -100,14 +100,17 @@ describe("analytics service", () => {
       sessionId: "s-http"
     });
 
-    // Wait for the async HTTP call to complete
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => {
+      const found = warnings.find(
+        (w) => (w as { outcome?: string }).outcome === "analytics_http_error"
+      );
+      expect(found).toBeDefined();
+    });
     fetchSpy.mockRestore();
 
     const warnEntry = warnings.find(
       (w) => (w as { outcome?: string }).outcome === "analytics_http_error"
     ) as { outcome: string; details: { status: number } } | undefined;
-    expect(warnEntry).toBeDefined();
     expect(warnEntry?.details.status).toBe(500);
   });
 
