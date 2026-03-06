@@ -71,6 +71,51 @@ describe("analytics service", () => {
     expect(payload?.has_ref_code).toBe(true);
   });
 
+  it("logs WARN on HTTP non-OK response", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "five-friends-analytics-http-"));
+    tempDirs.push(dir);
+    const store = new SqliteStore(join(dir, "bot.sqlite"));
+    stores.push(store);
+    const warnings: unknown[] = [];
+    const logger = {
+      info() {},
+      warn(payload: unknown) {
+        warnings.push(payload);
+      }
+    } as never;
+
+    const { createServer } = await import("node:http");
+    const server = createServer((_req, res) => {
+      res.writeHead(500);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+    const endpoint = `http://127.0.0.1:${addr.port}`;
+
+    const analytics = new AnalyticsService({
+      db: store.getDb(),
+      logger,
+      httpEndpoint: endpoint
+    });
+
+    analytics.emitEvent({
+      event: "start",
+      userId: "u-http",
+      sessionId: "s-http"
+    });
+
+    // Wait for the async HTTP call to complete
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    server.close();
+
+    const warnEntry = warnings.find(
+      (w) => (w as { outcome?: string }).outcome === "analytics_http_error"
+    ) as { outcome: string; details: { status: number } } | undefined;
+    expect(warnEntry).toBeDefined();
+    expect(warnEntry?.details.status).toBe(500);
+  });
+
   it("builds stats snapshot from UTC daily aggregates", () => {
     const { analytics, db } = createAnalytics();
     db.prepare("INSERT INTO event_daily (date, event, count) VALUES (?, ?, ?)").run("2026-03-01", "start", 10);

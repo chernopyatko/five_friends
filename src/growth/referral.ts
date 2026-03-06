@@ -3,6 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { Logger as PinoLogger } from "pino";
 
+import { hashUserId } from "../utils/hashUserId.js";
+
 const INVITER_CODE_LENGTH = 10;
 const MAX_CODE_RETRIES = 5;
 
@@ -102,7 +104,7 @@ export class ReferralService {
       {
         outcome: "referral_code_fallback_exhausted",
         details: {
-          userId
+          user_id_hash: hashUserId(userId)
         }
       },
       "Random inviter code retries exhausted, using deterministic fallback from userId"
@@ -131,13 +133,13 @@ export class ReferralService {
         // Even the deterministic code collided — theoretically impossible
         // since user_id is unique, but handle gracefully.
         this.logger?.error(
-          { outcome: "deterministic_code_collision", details: { userId } },
+          { outcome: "deterministic_code_collision", details: { user_id_hash: hashUserId(userId) } },
           "Deterministic inviter code collided — this should never happen"
         );
       }
       throw error;
     }
-    throw new Error(`Failed to persist user ${userId} after deterministic fallback`);
+    throw new Error(`Failed to persist user ${hashUserId(userId)} after deterministic fallback`);
   }
 
   getOrCreateInviterCode(userId: string): string {
