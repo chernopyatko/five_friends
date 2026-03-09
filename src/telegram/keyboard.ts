@@ -114,9 +114,8 @@ export function helpCountryKeyboard(): InlineKeyboard {
   ]];
 }
 
-export function shareKeyboard(link: string): InlineKeyboard {
+export function shareKeyboard(_link: string): InlineKeyboard {
   return [[
-    { text: "Поделиться ботом", url: link },
-    { text: "Получить ссылку", data: "sh" }
+    { text: "Посоветовать бота", data: "sh" }
   ]];
 }

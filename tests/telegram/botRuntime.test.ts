@@ -204,9 +204,7 @@ describe("bot runtime hooks", () => {
     expect(result.messages).toHaveLength(2);
     expect(result.messages[1]?.text).toBe("Что дальше?");
     expect(result.messages[1]?.keyboard?.[0]?.[0]).toMatchObject({
-      text: "Поделиться ботом"
-    });
-    expect(result.messages[1]?.keyboard?.[0]?.[1]).toMatchObject({
+      text: "Посоветовать бота",
       data: "sh"
     });
   });
