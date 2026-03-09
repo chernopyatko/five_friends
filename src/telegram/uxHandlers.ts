@@ -23,45 +23,35 @@ import type { BotMode, ToolScenario } from "../llm/schemas.js";
 const RATE_LIMIT_WINDOW_MS = 2000;
 const RATE_LIMIT_MAX_MESSAGES = 5;
 const START_TEXT =
-  "Привет! Это бот с четырьмя AI-друзьями — каждый со своим характером.\n" +
-  "Можно просто поговорить, попросить совет или разобрать сложную ситуацию.\n\n" +
-  "👥 ДРУЗЬЯ\n" +
+  "Привет! Здесь живут 4 ИИ-друга. Мы здесь, чтобы помочь тебе подобрать правильные слова в сложных ситуациях.\n\n" +
+  "🧰 ЧТО МЫ УМЕЕМ\n" +
+  "📝 Напиши за меня — опиши ситуацию, и мы сформулируем сообщение кому угодно.\n" +
+  "💬 Помоги ответить — перешли нам сложное сообщение, а мы подскажем, что на него ответить.\n" +
+  "🚀 Спросить всех — задай один вопрос и получи 4 разных взгляда на ситуацию.\n" +
+  "А еще можно выбрать кого-то одного и просто поболтать.\n\n" +
+  "👥 КТО ОТВЕЧАЕТ\n" +
   "🧠 Ян — разложит по полочкам и даст план\n" +
   "❤️ Наташа — поддержит и назовёт чувства\n" +
   "🌀 Аня — задаст точный вопрос про главное\n" +
   "🎯 Макс — пошутит, вернёт на землю и отделит факты от эмоций\n\n" +
-  "🚀 ВСЕ ВЗГЛЯДЫ\n" +
-  "Нажми «🚀 Спросить всех» — один запрос, четыре разных ответа.\n\n" +
-  "🧰 ИНСТРУМЕНТЫ\n" +
-  "📝 Напиши за меня — поможет сформулировать сложное сообщение\n" +
-  "💬 Помоги ответить — подскажет что ответить на входящее\n" +
-  "📋 Итоги — соберёт сводку вашего разговора\n\n" +
-  "⸻\n\n" +
-  "Выбери друга внизу 👇 или сразу нажми 🚀 Спросить всех.\n" +
-  "Ответ обычно приходит за 5–15 секунд ⏳\n" +
-  "📌 Закрепи бот в списке чатов — друзья всегда будут рядом.";
+  "Выбирай нужный инструмент в меню ниже или просто пиши свой вопрос прямо сюда!";
 const HELP_TEXT =
   "❓ Как тут всё устроено\n" +
-  "Это чат с четырьмя друзьями: Ян, Наташа, Аня, Макс. Ты выбираешь друга и пишешь как обычно.\n\n" +
-  "🚀 Спросить всех\n" +
-  "Если нужен быстрый разбор с разных сторон: нажми 🚀 Спросить всех → следующее сообщение разберут все четверо.\n\n" +
+  "Здесь живут 4 ИИ-друга. Ты выбираешь друга и пишешь как обычно.\n\n" +
   "🧰 Инструменты\n" +
-  "📝 Напиши за меня — поможет сформулировать сложное сообщение.\n" +
-  "💬 Помоги ответить — подскажет что ответить на входящее.\n" +
-  "📋 Итоги — коротко собирает суть текущей сессии.\n\n" +
-  "⸻\n\n" +
-  "👥 Друзья — кто есть кто\n\n" +
-  "🧠 Ян — рациональный друг.\n" +
-  "Он превращает хаос в структуру и даёт 1–3 шага на ближайшие день-два.\n\n" +
-  "❤️ Наташа — бережная подруга.\n" +
-  "Она называет чувства точно и мягко, без советов и давления.\n\n" +
-  "🌀 Аня — смысловой компас.\n" +
-  "Она задаёт точный вопрос про выбор и цену бездействия.\n\n" +
-  "🎯 Макс — добрый реалист с иронией.\n" +
-  "Он отделяет факты от накрутки и даёт один конкретный вызов на действие.\n\n" +
+  "📝 Напиши за меня — опиши ситуацию, и мы сформулируем сообщение кому угодно.\n" +
+  "💬 Помоги ответить — перешли сложное сообщение, подскажем что ответить.\n" +
+  "📋 Итоги — соберёт сводку вашего разговора.\n\n" +
+  "🚀 Спросить всех\n" +
+  "Нажми � Спросить всех → следующее сообщение разберут все четверо.\n\n" +
+  "👥 Кто отвечает\n" +
+  "🧠 Ян — разложит по полочкам и даст план\n" +
+  "❤️ Наташа — поддержит и назовёт чувства\n" +
+  "🌀 Аня — задаст точный вопрос про главное\n" +
+  "🎯 Макс — пошутит, вернёт на землю и отделит факты от эмоций\n\n" +
   "⸻\n\n" +
   "Если ты написал без выбора\n" +
-  "Ничего страшного: бот спросит “кого позвать?” — выберешь, и он ответит.\n\n" +
+  "Ничего страшного: бот спросит \"кого позвать?\" — выберешь, и он ответит.\n\n" +
   "⚙️ Настройки\n" +
   "Там можно сбросить текущую сессию, управлять тем, что бот помнит, и удалить сохранённое.";
 const PRIVACY_TEXT =
@@ -361,11 +351,34 @@ export class UXHandlers {
 
     if (callbackData === "panel_start") {
       if (state.pendingMode === "awaiting_panel_input") {
+        if (state.pendingPanelScenario === "compose") {
+          return { messages: [{ text: "Я уже жду сообщение для «Напиши за меня + Спросить всех».", replyKeyboard: mainReplyKeyboard() }] };
+        }
+        if (state.pendingPanelScenario === "reply") {
+          return { messages: [{ text: "Я уже жду сообщение для «Помоги ответить + Спросить всех».", replyKeyboard: mainReplyKeyboard() }] };
+        }
         return { messages: [{ text: "Я уже жду сообщение для всех друзей.", replyKeyboard: mainReplyKeyboard() }] };
       }
       state.lastPersonaBeforePanel = state.currentPersona;
+      if (state.pendingMode === "awaiting_compose_input") {
+        state.pendingPanelScenario = "compose";
+      } else if (state.pendingMode === "awaiting_reply_input") {
+        state.pendingPanelScenario = "reply";
+      } else {
+        state.pendingPanelScenario = null;
+      }
       state.pendingMode = "awaiting_panel_input";
       this.clearDangerConfirmations(state);
+      if (state.pendingPanelScenario === "compose") {
+        return {
+          messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Напиши за меня».", replyKeyboard: mainReplyKeyboard() }]
+        };
+      }
+      if (state.pendingPanelScenario === "reply") {
+        return {
+          messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Помоги ответить».", replyKeyboard: mainReplyKeyboard() }]
+        };
+      }
       return {
         messages: [{ text: "🤝 Ок. Следующее сообщение разберём вместе. Опиши ситуацию одним сообщением.", replyKeyboard: mainReplyKeyboard() }]
       };
@@ -373,11 +386,13 @@ export class UXHandlers {
 
     if (callbackData === "panel_cancel") {
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       return { messages: [{ text: "Отменил режим 🤝. Продолжаем.", replyKeyboard: mainReplyKeyboard() }] };
     }
 
     if (callbackData === "friends_info") {
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       return { messages: [{ text: "Выбери, кого позвать.", keyboard: friendsKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
     }
 
@@ -405,6 +420,7 @@ export class UXHandlers {
 
     if (callbackData === "summary_now") {
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -547,6 +563,12 @@ export class UXHandlers {
       state.pendingMode === "awaiting_panel_input" &&
       panelRequested
     ) {
+      if (state.pendingPanelScenario === "compose") {
+        return { messages: [{ text: "Я уже жду сообщение для «Напиши за меня + Спросить всех».", replyKeyboard: mainReplyKeyboard() }] };
+      }
+      if (state.pendingPanelScenario === "reply") {
+        return { messages: [{ text: "Я уже жду сообщение для «Помоги ответить + Спросить всех».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       return { messages: [{ text: "Я уже жду сообщение для всех друзей.", replyKeyboard: mainReplyKeyboard() }] };
     }
 
@@ -578,6 +600,7 @@ export class UXHandlers {
 
     if ((state.pendingMode === "awaiting_compose_input" || state.pendingMode === "awaiting_reply_input") && summarySelection) {
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -590,15 +613,22 @@ export class UXHandlers {
 
     if ((state.pendingMode === "awaiting_compose_input" || state.pendingMode === "awaiting_reply_input") && panelRequested) {
       state.lastPersonaBeforePanel = state.currentPersona;
+      state.pendingPanelScenario = state.pendingMode === "awaiting_compose_input" ? "compose" : "reply";
       state.pendingMode = "awaiting_panel_input";
       this.clearDangerConfirmations(state);
+      if (state.pendingPanelScenario === "compose") {
+        return {
+          messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Напиши за меня».", replyKeyboard: mainReplyKeyboard() }]
+        };
+      }
       return {
-        messages: [{ text: "🤝 Переключил. Следующее сообщение разберём вместе. Опиши ситуацию одним сообщением.", replyKeyboard: mainReplyKeyboard() }]
+        messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Помоги ответить».", replyKeyboard: mainReplyKeyboard() }]
       };
     }
 
     if (state.pendingMode === "awaiting_panel_input" && summarySelection) {
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -611,6 +641,7 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_panel_input" && composeSelection) {
       state.pendingMode = "awaiting_compose_input";
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       if (state.currentPersona === null) {
         return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
@@ -620,6 +651,7 @@ export class UXHandlers {
 
     if (state.pendingMode === "awaiting_panel_input" && replySelection) {
       state.pendingMode = "awaiting_reply_input";
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       if (state.currentPersona === null) {
         return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
@@ -632,6 +664,7 @@ export class UXHandlers {
         return { messages: [{ text: "Сначала выбери друга.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
       }
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📝 Собираю варианты формулировки..." }],
@@ -649,6 +682,7 @@ export class UXHandlers {
         return { messages: [{ text: "Сначала выбери друга.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
       }
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "💬 Собираю варианты ответа..." }],
@@ -662,12 +696,21 @@ export class UXHandlers {
     }
 
     if (state.pendingMode === "awaiting_panel_input") {
+      const panelScenario = state.pendingPanelScenario;
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
+      const panelIntro =
+        panelScenario === "compose"
+          ? "📝 Принял. Собираю варианты формулировки от всех друзей, это может занять до 20-30 секунд."
+          : panelScenario === "reply"
+            ? "💬 Принял. Собираю варианты ответа от всех друзей, это может занять до 20-30 секунд."
+            : "Принял. Собираю разбор от всех друзей, это может занять до 20-30 секунд.";
       return {
-        messages: [{ text: "Принял. Собираю разбор от всех друзей, это может занять до 20-30 секунд." }],
+        messages: [{ text: panelIntro }],
         llmTask: {
           mode: "PANEL",
+          scenario: panelScenario,
           userText: text
         }
       };
@@ -676,6 +719,7 @@ export class UXHandlers {
     if (panelRequested) {
       state.lastPersonaBeforePanel = state.currentPersona;
       state.pendingMode = "awaiting_panel_input";
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [
@@ -689,6 +733,7 @@ export class UXHandlers {
 
     if (summarySelection) {
       state.pendingMode = null;
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -701,6 +746,7 @@ export class UXHandlers {
 
     if (composeSelection) {
       state.pendingMode = "awaiting_compose_input";
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       if (state.currentPersona === null) {
         return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
@@ -710,6 +756,7 @@ export class UXHandlers {
 
     if (replySelection) {
       state.pendingMode = "awaiting_reply_input";
+      state.pendingPanelScenario = null;
       this.clearDangerConfirmations(state);
       if (state.currentPersona === null) {
         return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
@@ -752,6 +799,7 @@ export class UXHandlers {
     const wasComposePending = previousPendingMode === "awaiting_compose_input";
     const wasReplyPending = previousPendingMode === "awaiting_reply_input";
     state.pendingMode = wasComposePending || wasReplyPending ? previousPendingMode : null;
+    state.pendingPanelScenario = null;
     this.clearDangerConfirmations(state);
     state.currentPersona = persona;
 

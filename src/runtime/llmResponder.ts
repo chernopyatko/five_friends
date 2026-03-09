@@ -130,7 +130,7 @@ export class OpenAILLMResponder implements LLMResponder {
 
     const effectiveMode = policy.mode;
     const persona = effectiveMode === "SINGLE" ? task.persona : undefined;
-    const toolScenario = effectiveMode === "SINGLE" ? task.scenario ?? null : null;
+    const toolScenario = effectiveMode === "SINGLE" || effectiveMode === "PANEL" ? task.scenario ?? null : null;
     if (effectiveMode === "SINGLE" && !persona) {
       return [{ text: formatSingleFallback("yan") }];
     }

@@ -42,7 +42,7 @@ export function assertPromptInput(input: PromptBuildInput): void {
     }
   }
 
-  if (input.mode !== "SINGLE" && input.toolScenario) {
-    throw new Error("toolScenario can be used only in SINGLE mode.");
+  if (input.mode === "SUMMARY" && input.toolScenario) {
+    throw new Error("toolScenario can be used only in SINGLE or PANEL modes.");
   }
 }

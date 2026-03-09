@@ -75,8 +75,8 @@ export function buildPromptInstructions(input: PromptBuildInput): string {
     chunks.push(getPersonaPrompt(input.persona));
   }
 
-  // 5) Tool layer for scenario-driven SINGLE flows.
-  if (input.mode === "SINGLE" && input.toolScenario) {
+  // 5) Tool layer for scenario-driven SINGLE/PANEL flows.
+  if ((input.mode === "SINGLE" || input.mode === "PANEL") && input.toolScenario) {
     chunks.push(getToolPrompt(input.toolScenario));
   }
 

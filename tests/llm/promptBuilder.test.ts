@@ -46,4 +46,18 @@ describe("promptBuilder", () => {
     expect(instructions.includes(panelPrompt)).toBe(true);
     expect(instructions.includes(personaPrompt)).toBe(false);
   });
+
+  it("includes tool prompt for PANEL scenario", () => {
+    const instructions = buildPromptInstructions({
+      mode: "PANEL",
+      toolScenario: "reply",
+      userMessage: "Разберите это входящее"
+    });
+
+    const panelPrompt = readFileSync(join(PROMPTS_DIR, "mode_panel.txt"), "utf8").trim();
+    const toolPrompt = readFileSync(join(PROMPTS_DIR, "scenario_reply.txt"), "utf8").trim();
+
+    expect(instructions.includes(panelPrompt)).toBe(true);
+    expect(instructions.includes(toolPrompt)).toBe(true);
+  });
 });

@@ -323,6 +323,148 @@ describe("stateMachine", () => {
     expect(runCompose.state.pendingMode).toBeNull();
   });
 
+  it("keeps reply tool scenario when switching to ask-all flow", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-reply-to-panel",
+      callbackData: "choose_friend:max"
+    });
+
+    const replyPending = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-reply-to-panel",
+      text: "💬 Ответь"
+    });
+    expect(replyPending.state.pendingMode).toBe("awaiting_reply_input");
+
+    const switched = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-reply-to-panel",
+      text: "🚀 Спросить всех"
+    });
+    expect(switched.state.pendingMode).toBe("awaiting_panel_input");
+    expect(switched.state.pendingPanelScenario).toBe("reply");
+    expect(switched.llmTask).toBeUndefined();
+
+    const runPanelReply = handlers.handleEvent({
+      updateId: 4,
+      userId: "u-reply-to-panel",
+      text: "Он пишет: «ты опять пропал, мне это не ок»."
+    });
+    expect(runPanelReply.llmTask?.mode).toBe("PANEL");
+    expect(runPanelReply.llmTask?.scenario).toBe("reply");
+    expect(runPanelReply.state.pendingMode).toBeNull();
+    expect(runPanelReply.state.pendingPanelScenario).toBeNull();
+  });
+
+  it("keeps compose tool scenario when switching to ask-all flow", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-compose-to-panel",
+      callbackData: "choose_friend:yan"
+    });
+
+    const composePending = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-compose-to-panel",
+      text: "📝 Сформулируй"
+    });
+    expect(composePending.state.pendingMode).toBe("awaiting_compose_input");
+
+    const switched = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-compose-to-panel",
+      text: "🚀 Спросить всех"
+    });
+    expect(switched.state.pendingMode).toBe("awaiting_panel_input");
+    expect(switched.state.pendingPanelScenario).toBe("compose");
+    expect(switched.llmTask).toBeUndefined();
+
+    const runPanelCompose = handlers.handleEvent({
+      updateId: 4,
+      userId: "u-compose-to-panel",
+      text: "Напиши бывшему, что я не хочу продолжать общение."
+    });
+    expect(runPanelCompose.llmTask?.mode).toBe("PANEL");
+    expect(runPanelCompose.llmTask?.scenario).toBe("compose");
+    expect(runPanelCompose.state.pendingMode).toBeNull();
+    expect(runPanelCompose.state.pendingPanelScenario).toBeNull();
+  });
+
+  it("keeps reply scenario when ask-all is started via panel_start callback", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-reply-callback-panel",
+      callbackData: "choose_friend:max"
+    });
+    handlers.handleEvent({
+      updateId: 2,
+      userId: "u-reply-callback-panel",
+      text: "💬 Помоги ответить"
+    });
+
+    const switched = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-reply-callback-panel",
+      callbackData: "panel_start"
+    });
+    expect(switched.state.pendingMode).toBe("awaiting_panel_input");
+    expect(switched.state.pendingPanelScenario).toBe("reply");
+
+    const run = handlers.handleEvent({
+      updateId: 4,
+      userId: "u-reply-callback-panel",
+      text: "Он написал: «Ты ведешь себя непрофессионально»."
+    });
+    expect(run.llmTask?.mode).toBe("PANEL");
+    expect(run.llmTask?.scenario).toBe("reply");
+  });
+
+  it("isolates pending modes and scenarios between different users", () => {
+    const handlers = new UXHandlers();
+
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-a",
+      callbackData: "choose_friend:yan"
+    });
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-b",
+      callbackData: "choose_friend:max"
+    });
+
+    handlers.handleEvent({
+      updateId: 2,
+      userId: "u-a",
+      text: "💬 Помоги ответить"
+    });
+    handlers.handleEvent({
+      updateId: 2,
+      userId: "u-b",
+      text: "🚀 Спросить всех"
+    });
+
+    const runA = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-a",
+      text: "Она пишет: «где дедлайн?»"
+    });
+    expect(runA.llmTask?.mode).toBe("SINGLE");
+    expect(runA.llmTask?.scenario).toBe("reply");
+
+    const runB = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-b",
+      text: "Я не понимаю, как выйти из конфликта."
+    });
+    expect(runB.llmTask?.mode).toBe("PANEL");
+    expect(runB.llmTask?.scenario).toBeNull();
+  });
+
   it("enters reply pending mode and triggers SINGLE scenario", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({
@@ -503,7 +645,7 @@ describe("stateMachine", () => {
       command: "/start",
       commandPayload: `ref_${refCode}`
     });
-    expect(first.messages[0]?.text).toContain("Привет! Это бот");
+    expect(first.messages[0]?.text).toContain("Привет! Здесь живут 4 ИИ-друга");
 
     const second = handlers.handleEvent({
       updateId: 4,
@@ -511,7 +653,7 @@ describe("stateMachine", () => {
       command: "/start",
       commandPayload: `ref_${refCode}`
     });
-    expect(second.messages[0]?.text).toContain("Привет! Это бот");
+    expect(second.messages[0]?.text).toContain("Привет! Здесь живут 4 ИИ-друга");
   });
 
   it("restricts /stats to admins", () => {

@@ -1,4 +1,5 @@
 export type Persona = "yan" | "natasha" | "anya" | "max";
+export type PanelScenario = "compose" | "reply" | null;
 export type PendingMode =
   | "awaiting_panel_input"
   | "awaiting_compose_input"
@@ -22,6 +23,7 @@ export interface UserSessionState {
   pendingForgetConfirmation: boolean;
   pendingResetConfirmation: boolean;
   lastPersonaBeforePanel: Persona | null;
+  pendingPanelScenario: PanelScenario;
   sessionId: string;
   sessionStartTs: number;
   lastActivityTs: number;
@@ -47,6 +49,7 @@ export function createInitialSessionState(input: {
     pendingForgetConfirmation: false,
     pendingResetConfirmation: false,
     lastPersonaBeforePanel: null,
+    pendingPanelScenario: null,
     sessionId: input.sessionId,
     sessionStartTs: now,
     lastActivityTs: now,

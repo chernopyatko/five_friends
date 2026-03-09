@@ -175,17 +175,17 @@ function withGenerationFailure(result: HandleResult): HandleResult {
 }
 
 function resolvePostGenerationEvent(task: LLMTask): AnalyticsEventName | null {
+  if (task.scenario === "compose") {
+    return "tool_write_for_me";
+  }
+  if (task.scenario === "reply") {
+    return "tool_help_reply";
+  }
   if (task.mode === "PANEL") {
     return "ask_all";
   }
   if (task.mode === "SUMMARY") {
     return "tool_summary";
-  }
-  if (task.mode === "SINGLE" && task.scenario === "compose") {
-    return "tool_write_for_me";
-  }
-  if (task.mode === "SINGLE" && task.scenario === "reply") {
-    return "tool_help_reply";
   }
   return null;
 }
