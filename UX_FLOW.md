@@ -30,7 +30,7 @@
    - `awaiting_reply_input` -> SINGLE + `scenario=reply`.
 5. Triggers:
    - panel: `спросить всех|все взгляды|все сразу|совет всех|позвать всех`
-   - summary: `итоги|сводка|инна` (legacy aliases)
+   - summary: `итоги|сводка` (+ legacy alias `инна` в коде)
    - compose: `напиши за меня|сформулируй`
    - reply: `помоги ответить|ответь`
 6. Default:
@@ -44,7 +44,7 @@
 - Следующий текст -> `llmTask.mode = PANEL`, pending очищается.
 
 ## 5) Summary flow
-- Вход: кнопка `📋 Итоги`, callback `summary_now`, или trigger `сводка`/`инна`.
+- Вход: кнопка `📋 Итоги`, callback `summary_now`, или trigger `сводка`.
 - Состояние: pending не используется, режим запускается сразу.
 - `llmTask.mode = SUMMARY` в том же update.
 - Summary — tool-flow без отдельной персоны.

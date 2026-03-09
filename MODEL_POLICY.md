@@ -24,7 +24,7 @@ C) Memory updater (gpt-5-mini) -> rollingSummary + long-term.
 2) `forcedMode == PANEL|SUMMARY` (из `llmTask.mode`) -> выбранный MODE.
 3) `pendingMode == awaiting_panel_input` -> MODE=PANEL, model=gpt-5.2.
 4) Явный trigger panel (`все взгляды`, `все сразу`, `совет всех`, `позвать всех`) -> MODE=PANEL.
-5) Явный trigger summary (`сводка`, `инна`) -> MODE=SUMMARY.
+5) Явный trigger summary (`сводка`, `итоги`) -> MODE=SUMMARY.
 6) Иначе MODE=SINGLE (персону задаёт UX).
 
 ## 4) Tool scenarios
