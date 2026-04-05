@@ -171,7 +171,7 @@ export class BotRuntime {
           } else if (newBalance <= 10) {
             const lastMsg = mergedMessages[mergedMessages.length - 1];
             if (lastMsg) {
-              lastMsg.text += `\n\n💬 Баланс: ${newBalance}`;
+              lastMsg.text += `\n\n💬 Баланс: ${newBalance} сообщений`;
             }
           }
         } catch (error) {
