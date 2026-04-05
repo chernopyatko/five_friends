@@ -150,7 +150,7 @@
 - Транскрипт передаётся в существующий пайплайн как `userText`.
 - Биллинг: 1 сообщение (как SINGLE).
 - Graceful error если файл >25 MB или STT недоступен.
-- Rate limit: макс N STT запросов в час на юзера (конфигурируемый).
+- Rate limit: макс 30 STT запросов в час на юзера (env `STT_RATE_LIMIT_PER_HOUR`, default 30).
 
 **Verify:**
 - unit-test для speechToText (mock OpenAI)
@@ -163,6 +163,7 @@
 
 **DoD:**
 - `bot.on("message:photo")` скачивает фото, передаёт как `input_image` в OpenAI Chat Completions API (vision).
+- Если есть `message.caption` — передаётся как `userText` вместе с изображением.
 - Скачанные изображения удаляются после обработки.
 - Privacy notice: юзер информируется о передаче изображений в OpenAI (при первом использовании).
 - Поддержка форматов: JPEG, PNG, WebP (до 20 MB).
@@ -180,8 +181,8 @@
 
 **DoD:**
 - DB-based scheduler (или внешний cron) отправляет push-сообщение неактивным юзерам.
-- «Неактивный» = нет сообщений/сессий последние 24h (configurable).
-- Reminder state хранится в DB (`last_reminder_sent_at`), переживает рестарты.
+- «Неактивный» = нет сообщений/сессий последние 24h (env `INACTIVITY_THRESHOLD_HOURS`, default 24, в часах).
+- Reminder state: колонка `last_reminder_sent_at INTEGER` (епоха ms, nullable) в таблице `user_balance`. Для существующих юзеров — NULL (напоминание ещё не отправлялось). Переживает рестарты.
 - Тон напоминания — от `currentPersona` юзера (например Макс шутит, Наташа мягко спрашивает).
 - Юзер может отключить напоминания через `/settings`.
 - Privacy: юзер информируется о трекинге активности для напоминаний.

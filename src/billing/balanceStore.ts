@@ -97,8 +97,11 @@ export class BalanceStore {
       try {
         insertTx.run(randomUUID(), userId, amount, reason, normalizedTributeOrderId, now);
       } catch (err: unknown) {
-        const sqliteErr = err as { code?: string };
-        if (sqliteErr.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        const sqliteErr = err as { code?: string; message?: string };
+        if (
+          sqliteErr.code === "SQLITE_CONSTRAINT_UNIQUE" &&
+          sqliteErr.message?.includes("tribute_order_id")
+        ) {
           return { credited: false, balance: this.getBalance(userId) };
         }
         throw err;

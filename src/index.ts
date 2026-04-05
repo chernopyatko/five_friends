@@ -414,21 +414,6 @@ async function handleTributeWebhookRequest(
       return;
     }
 
-    const amount = input.billingConfig.productMap[event.productId];
-    if (!amount) {
-      input.logger.info(
-        toSafeLog({
-          outcome: "tribute_webhook_unknown_product",
-          details: {
-            productId: event.productId
-          }
-        }),
-        "Unknown Tribute product id"
-      );
-      writeJson(res, 200, { ok: true, ignored: true });
-      return;
-    }
-
     if (event.eventType === "digital_product_refunded") {
       input.logger.warn(
         toSafeLog({
@@ -441,6 +426,21 @@ async function handleTributeWebhookRequest(
         "Digital product refunded (no balance deduction yet)"
       );
       writeJson(res, 200, { ok: true, refund_logged: true });
+      return;
+    }
+
+    const amount = input.billingConfig.productMap[event.productId];
+    if (!amount) {
+      input.logger.info(
+        toSafeLog({
+          outcome: "tribute_webhook_unknown_product",
+          details: {
+            productId: event.productId
+          }
+        }),
+        "Unknown Tribute product id"
+      );
+      writeJson(res, 200, { ok: true, ignored: true });
       return;
     }
 
