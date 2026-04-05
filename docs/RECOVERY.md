@@ -65,9 +65,9 @@ SET balance = balance + <AMOUNT>,
     updated_at = unixepoch() * 1000
 WHERE user_id = '<USER_TELEGRAM_ID>';
 
--- Проверить что UPDATE затронул ровно 1 строку:
--- Если 0 — юзера нет в user_balance, нужно сначала инициализировать (отправить /start или вызвать ensureBalance).
--- Если 0, откатить: ROLLBACK; и разобраться.
+SELECT changes();
+-- Должно вернуть 1. Если 0 — юзера нет в user_balance, откатить: ROLLBACK;
+-- Затем инициализировать (отправить /start или вызвать ensureBalance) и повторить.
 COMMIT;
 ```
 
