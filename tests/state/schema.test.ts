@@ -41,6 +41,8 @@ describe("state schema", () => {
     expect(tableNames.has("memories")).toBe(true);
     expect(tableNames.has("users")).toBe(true);
     expect(tableNames.has("event_daily")).toBe(true);
+    expect(tableNames.has("user_balance")).toBe(true);
+    expect(tableNames.has("balance_transactions")).toBe(true);
 
     store.close();
   });

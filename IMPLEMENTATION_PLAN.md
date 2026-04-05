@@ -136,3 +136,54 @@
 **Verify:**
 - локальный запуск dev‑режима
 
+---
+
+# Phase 2 — Multimodal Input
+
+## 2.1 Voice input (STT)
+**Файлы:** src/telegram/voiceHandler.ts, src/llm/speechToText.ts
+
+**DoD:**
+- `bot.on("message:voice")` скачивает .ogg, отправляет в OpenAI Whisper API.
+- Транскрипт передаётся в существующий пайплайн как `userText`.
+- Биллинг: 1 сообщение (как SINGLE).
+- Graceful error если файл >20 MB или STT недоступен.
+
+**Verify:**
+- unit-test для speechToText (mock OpenAI)
+- smoke: отправить голосовое → получить ответ друга
+
+**Rollback:** удалить voiceHandler + speechToText, убрать хэндлер из index.ts.
+
+## 2.2 Image input (multimodal) — после 2.1
+**Файлы:** src/telegram/photoHandler.ts, src/llm/generator.ts (расширение)
+
+**DoD:**
+- `bot.on("message:photo")` скачивает фото, передаёт как `input_image` в Responses API.
+- `GeneratorInput` поддерживает optional `imageUrl`.
+- Биллинг: 2–3 сообщения.
+
+**Verify:**
+- unit-test для расширенного generator
+- smoke: отправить скриншот переписки → получить анализ
+
+**Rollback:** revert generator changes, удалить photoHandler.
+
+## 2.3 Daily reminders (retention)
+**Файлы:** src/scheduler/reminderScheduler.ts, src/scheduler/reminderTemplates.ts, tests/scheduler/reminderScheduler.test.ts
+
+**DoD:**
+- Фоновый cron/setInterval отправляет push-сообщение неактивным юзерам (configurable интервал, default 24h).
+- Тон напоминания — от `currentPersona` юзера (например Макс шутит, Наташа мягко спрашивает).
+- Юзер может отключить напоминания через `/settings`.
+- Бот не засыпает между сессиями: scheduler живёт в основном процессе.
+- Respectful: не более 1 напоминания в сутки, mute после opt-out.
+- Graceful: если `sendMessage` упал (юзер заблокировал бота) — логируем и не повторяем.
+
+**Verify:**
+- unit-test: scheduler вызывает sendMessage для inactive users, не вызывает для opted-out
+- unit-test: шаблон напоминания соответствует персоне
+- smoke: запустить бота, подождать interval → получить напоминание
+
+**Rollback:** удалить scheduler, убрать interval из index.ts, откатить settings handler.
+

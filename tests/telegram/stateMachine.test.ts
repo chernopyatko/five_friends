@@ -86,9 +86,12 @@ describe("stateMachine", () => {
       callbackData: "choose_friend:yan"
     });
 
-    expect(result.messages.length).toBeGreaterThanOrEqual(2);
+    expect(result.messages.length).toBeGreaterThanOrEqual(1);
     expect(result.messages[0]?.text).toContain("Сейчас с тобой Ян");
     expect(result.state.pendingUserText).toBeNull();
+    expect(result.llmTask).toBeDefined();
+    expect(result.llmTask?.mode).toBe("SINGLE");
+    expect(result.llmTask?.userText).toBe("нужна поддержка");
   });
 
   it("rejects duplicate updates by idempotency rule", () => {
@@ -529,9 +532,9 @@ describe("stateMachine", () => {
     const bot = new BotRuntime(new UXHandlers(), {
       async generate({ task }) {
         if (task.mode === "SINGLE" && task.persona === "yan") {
-          return [{ text: `(Ян) ${task.userText}` }];
+          return { messages: [{ text: `(Ян) ${task.userText}` }], billable: true };
         }
-        return [{ text: "ok" }];
+        return { messages: [{ text: "ok" }], billable: true };
       }
     });
     const promises = [
@@ -645,7 +648,7 @@ describe("stateMachine", () => {
       command: "/start",
       commandPayload: `ref_${refCode}`
     });
-    expect(first.messages[0]?.text).toContain("Привет! Здесь живут 4 ИИ-друга");
+    expect(first.messages[0]?.text).toContain("Привет! Здесь живут 4 друга");
 
     const second = handlers.handleEvent({
       updateId: 4,
@@ -653,7 +656,7 @@ describe("stateMachine", () => {
       command: "/start",
       commandPayload: `ref_${refCode}`
     });
-    expect(second.messages[0]?.text).toContain("Привет! Здесь живут 4 ИИ-друга");
+    expect(second.messages[0]?.text).toContain("Привет! Здесь живут 4 друга");
   });
 
   it("restricts /stats to admins", () => {

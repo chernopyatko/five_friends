@@ -1,3 +1,5 @@
+import type { TributeLinks } from "../billing/config.js";
+
 export interface InlineCallbackButton {
   text: string;
   data: string;
@@ -61,7 +63,7 @@ export function mainReplyKeyboard(): ReplyKeyboard {
     ["🚀 Спросить всех", "👥 Друзья"],
     ["📝 Напиши за меня", "💬 Помоги ответить"],
     ["📋 Итоги", "❓ Помощь"],
-    ["⚙️ Настройки"]
+    ["⭐ Премиум", "⚙️ Настройки"]
   ];
 }
 
@@ -114,8 +116,35 @@ export function helpCountryKeyboard(): InlineKeyboard {
   ]];
 }
 
-export function shareKeyboard(_link: string): InlineKeyboard {
+export function shareKeyboard(link: string): InlineKeyboard {
+  void link;
   return [[
     { text: "Посоветовать бота", data: "sh" }
   ]];
+}
+
+export function paywallKeyboard(links: TributeLinks): InlineKeyboard {
+  return buildTributeKeyboard(links);
+}
+
+export function lowBalanceKeyboard(links: TributeLinks): InlineKeyboard {
+  return buildTributeKeyboard(links);
+}
+
+export function balanceInfoKeyboard(links: TributeLinks): InlineKeyboard {
+  return buildTributeKeyboard(links);
+}
+
+function buildTributeKeyboard(links: TributeLinks): InlineKeyboard {
+  const rows: InlineKeyboard = [];
+  if (links.small) {
+    rows.push([{ text: "📦 50 сообщений — 299₽", url: links.small }]);
+  }
+  if (links.medium) {
+    rows.push([{ text: "📦 150 сообщений — 599₽", url: links.medium }]);
+  }
+  if (links.large) {
+    rows.push([{ text: "📦 350 сообщений — 999₽", url: links.large }]);
+  }
+  return rows;
 }

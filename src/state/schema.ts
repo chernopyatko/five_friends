@@ -65,6 +65,31 @@ export function initSchema(db: Database): void {
       count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (date, event)
     );
+
+    CREATE TABLE IF NOT EXISTS user_balance (
+      user_id TEXT PRIMARY KEY,
+      balance INTEGER NOT NULL DEFAULT 15,
+      total_purchased INTEGER NOT NULL DEFAULT 0,
+      total_spent INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS balance_transactions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      tribute_order_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS balance_tx_user_idx
+      ON balance_transactions(user_id);
+    CREATE INDEX IF NOT EXISTS balance_tx_created_idx
+      ON balance_transactions(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS balance_tx_order_id_uniq
+      ON balance_transactions(tribute_order_id)
+      WHERE tribute_order_id IS NOT NULL;
   `);
 }
 

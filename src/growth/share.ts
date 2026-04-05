@@ -3,10 +3,12 @@ export interface ShareLinkResult {
   isPlaceholder: boolean;
 }
 
+const VALID_TG_USERNAME = /^[a-zA-Z][a-zA-Z0-9_]{3,30}[a-zA-Z0-9]$/;
+
 export function buildShareLink(botUsername: string | undefined, inviterCode: string): ShareLinkResult {
   const normalizedUsername = (botUsername ?? "").trim().replace(/^@/, "");
   const encodedCode = encodeURIComponent(inviterCode);
-  if (!normalizedUsername) {
+  if (!normalizedUsername || !VALID_TG_USERNAME.test(normalizedUsername)) {
     return {
       url: `https://t.me/<BOT_USERNAME>?start=ref_${encodedCode}`,
       isPlaceholder: true

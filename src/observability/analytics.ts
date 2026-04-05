@@ -13,7 +13,9 @@ export type AnalyticsEventName =
   | "tool_summary"
   | "share_clicked"
   | "model_error"
-  | "safety_triggered";
+  | "safety_triggered"
+  | "paywall_shown"
+  | "purchase_completed";
 
 type EventExtraValue = string | number | boolean | null | undefined;
 
@@ -36,6 +38,8 @@ export interface StatsSnapshot {
     shareClicked: number;
     modelError: number;
     safetyTriggered: number;
+    paywallShown: number;
+    purchaseCompleted: number;
   };
   sevenDays: {
     starts: number;
@@ -110,7 +114,9 @@ export class AnalyticsService {
         toolSummary: this.getEventTotalInRange("tool_summary", todayDate, todayDate),
         shareClicked: this.getEventTotalInRange("share_clicked", todayDate, todayDate),
         modelError: this.getEventTotalInRange("model_error", todayDate, todayDate),
-        safetyTriggered: this.getEventTotalInRange("safety_triggered", todayDate, todayDate)
+        safetyTriggered: this.getEventTotalInRange("safety_triggered", todayDate, todayDate),
+        paywallShown: this.getEventTotalInRange("paywall_shown", todayDate, todayDate),
+        purchaseCompleted: this.getEventTotalInRange("purchase_completed", todayDate, todayDate)
       },
       sevenDays: {
         starts: this.getEventTotalInRange("start", from7d, todayDate),

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  balanceInfoKeyboard,
   demoTryKeyboard,
   forgetConfirmKeyboard,
   friendsKeyboard,
@@ -16,6 +17,8 @@ import {
 import { CRISIS_RESUME_TEXT, getCrisisResponder, getHelpDiscovery, getSafetyCheck, type HelpCountryCode } from "../security/safety.js";
 import { buildShareLink, formatShareLinkMessage } from "../growth/share.js";
 import type { ReferralService } from "../growth/referral.js";
+import type { BalanceStore } from "../billing/balanceStore.js";
+import type { BillingConfig } from "../billing/config.js";
 import { createInitialSessionState, type Persona, type UserSessionState } from "../state/session.js";
 import type { AnalyticsService } from "../observability/analytics.js";
 import type { BotMode, ToolScenario } from "../llm/schemas.js";
@@ -23,11 +26,11 @@ import type { BotMode, ToolScenario } from "../llm/schemas.js";
 const RATE_LIMIT_WINDOW_MS = 2000;
 const RATE_LIMIT_MAX_MESSAGES = 5;
 const START_TEXT =
-  "Привет! Здесь живут 4 ИИ-друга. Мы здесь, чтобы помочь тебе подобрать правильные слова в сложных ситуациях.\n\n" +
+  "Привет! Здесь живут 4 друга — они помогут разобраться в сложной ситуации и подобрать правильные слова.\n\n" +
   "🧰 ЧТО МЫ УМЕЕМ\n" +
+  "🚀 Спросить всех — задай вопрос и получи 4 разных взгляда на ситуацию.\n" +
   "📝 Напиши за меня — опиши ситуацию, и мы сформулируем сообщение кому угодно.\n" +
   "💬 Помоги ответить — перешли нам сложное сообщение, а мы подскажем, что на него ответить.\n" +
-  "🚀 Спросить всех — задай один вопрос и получи 4 разных взгляда на ситуацию.\n" +
   "А еще можно выбрать кого-то одного и просто поболтать.\n\n" +
   "👥 КТО ОТВЕЧАЕТ\n" +
   "🧠 Ян — разложит по полочкам и даст план\n" +
@@ -43,7 +46,8 @@ const HELP_TEXT =
   "💬 Помоги ответить — перешли сложное сообщение, подскажем что ответить.\n" +
   "📋 Итоги — соберёт сводку вашего разговора.\n\n" +
   "🚀 Спросить всех\n" +
-  "Нажми � Спросить всех → следующее сообщение разберут все четверо.\n\n" +
+  "Нажми 🚀 Спросить всех → следующее сообщение разберут все четверо.\n" +
+  "💡 Один друг = 1 сообщение, панель = 3 сообщения.\n\n" +
   "👥 Кто отвечает\n" +
   "🧠 Ян — разложит по полочкам и даст план\n" +
   "❤️ Наташа — поддержит и назовёт чувства\n" +
@@ -78,7 +82,7 @@ export interface IncomingEvent {
   updateId: number;
   userId: string;
   text?: string;
-  command?: "/start" | "/help" | "/friends" | "/reset" | "/privacy" | "/forget" | "/settings" | "/demo" | "/stats";
+  command?: "/start" | "/help" | "/friends" | "/reset" | "/privacy" | "/forget" | "/settings" | "/demo" | "/stats" | "/balance";
   commandPayload?: string;
   callbackData?: string;
   now?: number;
@@ -112,17 +116,25 @@ export class UXHandlers {
   private readonly referrals?: ReferralService;
   private readonly analytics?: AnalyticsService;
   private readonly adminUserIds: Set<string>;
+  private readonly bypassBalanceUserIds: Set<string>;
+  private readonly balanceStore?: BalanceStore;
+  private readonly billingConfig?: BillingConfig;
   private readonly botUsername?: string;
 
   constructor(input?: {
     referrals?: ReferralService;
     analytics?: AnalyticsService;
     adminUserIds?: Iterable<string>;
+    bypassBalanceUserIds?: Iterable<string>;
+    balanceStore?: BalanceStore;
+    billingConfig?: BillingConfig;
     botUsername?: string;
   }) {
     this.referrals = input?.referrals;
     this.analytics = input?.analytics;
     this.botUsername = input?.botUsername;
+    this.balanceStore = input?.balanceStore;
+    this.billingConfig = input?.billingConfig;
     this.adminUserIds = new Set(
       input?.adminUserIds ??
         (process.env.ADMIN_USER_IDS ?? "")
@@ -130,6 +142,7 @@ export class UXHandlers {
           .map((id) => id.trim())
           .filter((id) => id.length > 0)
     );
+    this.bypassBalanceUserIds = new Set(input?.bypassBalanceUserIds ?? []);
   }
 
   handleEvent(event: IncomingEvent): HandleResult {
@@ -283,6 +296,29 @@ export class UXHandlers {
           ]
         };
       }
+      case "/balance": {
+        if (this.bypassBalanceUserIds.has(userId)) {
+          return {
+            messages: [{ text: "💬 У тебя безлимитный доступ ♾️" }]
+          };
+        }
+        if (!this.billingConfig?.isConfigured || !this.balanceStore) {
+          return {
+            messages: [{ text: "💬 Сейчас все разговоры бесплатны." }]
+          };
+        }
+        this.balanceStore.ensureBalance(userId);
+        const info = this.balanceStore.getBalanceInfo(userId);
+        return {
+          messages: [{
+            text:
+              `💬 Баланс: ${info.balance}\n` +
+              `📊 Использовано: ${info.totalSpent}\n\n` +
+              "Пополнить:",
+            keyboard: balanceInfoKeyboard(this.billingConfig.tributeLinks)
+          }]
+        };
+      }
       case "/reset": {
         state.pendingForgetConfirmation = false;
         state.pendingResetConfirmation = true;
@@ -330,7 +366,20 @@ export class UXHandlers {
         userId,
         sessionId: state.sessionId
       });
-      return { messages: this.selectPersona(state, persona) };
+      const pendingText = state.pendingUserText;
+      const messages = this.selectPersona(state, persona);
+      if (pendingText) {
+        return {
+          messages,
+          llmTask: {
+            mode: "SINGLE",
+            persona,
+            scenario: null,
+            userText: pendingText
+          }
+        };
+      }
+      return { messages };
     }
 
     if (callbackData === "sh") {
@@ -350,6 +399,21 @@ export class UXHandlers {
     }
 
     if (callbackData === "panel_start") {
+      if (state.pendingUserText) {
+        const pending = state.pendingUserText;
+        state.pendingUserText = null;
+        state.pendingMode = null;
+        state.pendingPanelScenario = null;
+        this.clearDangerConfirmations(state);
+        return {
+          messages: [{ text: "🤝 Разберём вместе.", replyKeyboard: mainReplyKeyboard() }],
+          llmTask: {
+            mode: "PANEL",
+            scenario: null,
+            userText: pending
+          }
+        };
+      }
       if (state.pendingMode === "awaiting_panel_input") {
         if (state.pendingPanelScenario === "compose") {
           return { messages: [{ text: "Я уже жду сообщение для «Напиши за меня + Спросить всех».", replyKeyboard: mainReplyKeyboard() }] };
@@ -540,11 +604,48 @@ export class UXHandlers {
 
     const quickPersona = resolveQuickPersona(quickAction);
     if (quickPersona) {
-      return { messages: this.selectPersona(state, quickPersona) };
+      const pendingText = state.pendingUserText;
+      const messages = this.selectPersona(state, quickPersona);
+      if (pendingText) {
+        return {
+          messages,
+          llmTask: {
+            mode: "SINGLE",
+            persona: quickPersona,
+            scenario: null,
+            userText: pendingText
+          }
+        };
+      }
+      return { messages };
     }
 
     if (quickAction === "помощь") {
       return { messages: [{ text: HELP_TEXT, replyKeyboard: mainReplyKeyboard() }] };
+    }
+
+    if (quickAction === "премиум") {
+      if (this.bypassBalanceUserIds.has(userId)) {
+        return { messages: [{ text: "💬 У тебя безлимитный доступ ♾️", replyKeyboard: mainReplyKeyboard() }] };
+      }
+      if (!this.billingConfig?.isConfigured || !this.balanceStore) {
+        return { messages: [{ text: "💬 Сейчас все разговоры бесплатны.", replyKeyboard: mainReplyKeyboard() }] };
+      }
+      this.balanceStore.ensureBalance(userId);
+      const premiumInfo = this.balanceStore.getBalanceInfo(userId);
+      return {
+        messages: [{
+          text:
+            `💬 Баланс: ${premiumInfo.balance}\n` +
+            `📊 Использовано: ${premiumInfo.totalSpent}\n` +
+            `💡 Один друг = 1 сообщение, панель = 3\n\n` +
+            "📦 50 сообщений — 299₽\n" +
+            "📦 150 сообщений — 599₽\n" +
+            "📦 350 сообщений — 999₽",
+          keyboard: balanceInfoKeyboard(this.billingConfig.tributeLinks),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
     }
 
     if (quickAction === "настройки") {
@@ -804,11 +905,9 @@ export class UXHandlers {
     state.currentPersona = persona;
 
     if (state.pendingUserText) {
-      const pending = state.pendingUserText;
       state.pendingUserText = null;
       return [
-        { text: `Сейчас с тобой ${personaLabel(persona)}.`, replyKeyboard: mainReplyKeyboard() },
-        { text: `(${personaLabel(persona)}) ${pending}` }
+        { text: `Сейчас с тобой ${personaLabel(persona)}.`, replyKeyboard: mainReplyKeyboard() }
       ];
     }
 
@@ -948,6 +1047,8 @@ function formatStatsMessage(
       shareClicked: number;
       modelError: number;
       safetyTriggered: number;
+      paywallShown: number;
+      purchaseCompleted: number;
     };
     sevenDays: {
       starts: number;
@@ -970,7 +1071,9 @@ function formatStatsMessage(
     `• tools: write ${stats.today.toolWrite} / reply ${stats.today.toolReply} / summary ${stats.today.toolSummary}\n` +
     `• share_clicked: ${stats.today.shareClicked}\n` +
     `• model_error: ${stats.today.modelError}\n` +
-    `• safety_triggered: ${stats.today.safetyTriggered}\n\n` +
+    `• safety_triggered: ${stats.today.safetyTriggered}\n` +
+    `• paywall_shown: ${stats.today.paywallShown}\n` +
+    `• purchase_completed: ${stats.today.purchaseCompleted}\n\n` +
     "7 дней:\n" +
     `• starts: ${stats.sevenDays.starts}\n` +
     `• ask_all: ${stats.sevenDays.askAll}\n` +

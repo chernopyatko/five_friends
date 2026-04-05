@@ -1,8 +1,12 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 
 import OpenAI from "openai";
 import { Bot, type Context } from "grammy";
 
+import { BalanceStore } from "./billing/balanceStore.js";
+import { loadBillingConfig, type BillingConfig } from "./billing/config.js";
+import { parseTributeWebhookEvent, verifyTributeSignature } from "./billing/tributeWebhook.js";
 import { ReferralService } from "./growth/referral.js";
 import { createOpenAIResponsesCompatClient } from "./llm/openaiCompatClient.js";
 import { AnalyticsService } from "./observability/analytics.js";
@@ -15,7 +19,7 @@ import type { InlineKeyboard, ReplyKeyboard } from "./telegram/keyboard.js";
 import { UXHandlers, type IncomingEvent, type OutgoingMessage } from "./telegram/uxHandlers.js";
 import { hashUserId } from "./utils/hashUserId.js";
 
-const SUPPORTED_COMMANDS = ["/start", "/help", "/friends", "/settings", "/demo", "/reset", "/privacy", "/forget", "/stats"] as const;
+const SUPPORTED_COMMANDS = ["/start", "/help", "/friends", "/settings", "/demo", "/reset", "/privacy", "/forget", "/stats", "/balance"] as const;
 type SupportedCommand = (typeof SUPPORTED_COMMANDS)[number];
 const BOT_COMMANDS = [
   { command: "start", description: "Начать и выбрать друга" },
@@ -25,12 +29,16 @@ const BOT_COMMANDS = [
   { command: "privacy", description: "Что хранится и как удалить память" },
   { command: "reset", description: "Сбросить текущую сессию" },
   { command: "forget", description: "Удалить долгую память" },
+  { command: "balance", description: "Показать баланс сообщений" },
   { command: "stats", description: "Статистика (админ)" }
 ] as const;
 const STARTUP_RETRY_BASE_MS = 5_000;
 const STARTUP_RETRY_MAX_MS = 60_000;
 const TYPING_INITIAL_DELAY_MS = 300;
 const TYPING_REPEAT_MS = 4_000;
+const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
+const TRIBUTE_WEBHOOK_PATH = "/api/tribute/webhook";
+const KNOWN_TRIBUTE_EVENTS = new Set(["new_digital_product", "digital_product_refunded"]);
 
 export async function main(): Promise<void> {
   const logger = createLogger();
@@ -42,6 +50,20 @@ export async function main(): Promise<void> {
     logger,
     httpEndpoint: process.env.ANALYTICS_HTTP_ENDPOINT
   });
+  const balanceStore = new BalanceStore(store.getDb());
+  const billingConfig = loadBillingConfig();
+  const billingDisableReason = !billingConfig.tributeApiSecret ? "TRIBUTE_API_SECRET_MISSING" : "BILLING_CONFIG_INCOMPLETE";
+  if (!billingConfig.isConfigured) {
+    logger.warn(
+      toSafeLog({
+        outcome: "startup_billing_disabled",
+        details: {
+          reason: billingDisableReason
+        }
+      }),
+      "Billing is disabled, unlimited access mode is active."
+    );
+  }
 
   const botToken = process.env.BOT_TOKEN;
   if (!botToken) {
@@ -65,11 +87,43 @@ export async function main(): Promise<void> {
     );
   }
 
-  const botUsername = process.env.BOT_USERNAME;
+  const adminUserIds = parseUserIdSet(process.env.ADMIN_USER_IDS);
+  const bypassBalanceUserIds = new Set<string>([
+    ...adminUserIds,
+    ...parseUserIdSet(process.env.BYPASS_BALANCE_USER_IDS)
+  ]);
+  const bot = new Bot(botToken);
+  let botUsername = process.env.BOT_USERNAME;
+  try {
+    const botInfo = await bot.api.getMe();
+    botUsername = botInfo.username;
+    logger.info(
+      toSafeLog({
+        outcome: "bot_username_detected",
+        details: { username: botInfo.username }
+      }),
+      "Bot username auto-detected from Telegram API"
+    );
+  } catch (error) {
+    logger.warn(
+      toSafeLog({
+        outcome: "bot_username_detection_failed",
+        details: {
+          fallback: botUsername ?? "<none>",
+          error: error instanceof Error ? error.message : "unknown"
+        }
+      }),
+      "Failed to auto-detect bot username, using BOT_USERNAME env var"
+    );
+  }
   const runtime = new BotRuntime(
     new UXHandlers({
       referrals,
       analytics,
+      adminUserIds,
+      bypassBalanceUserIds,
+      balanceStore,
+      billingConfig,
       botUsername
     }),
     responder,
@@ -77,10 +131,13 @@ export async function main(): Promise<void> {
       referrals,
       analytics,
       botUsername,
-      logger
+      logger,
+      balanceStore,
+      bypassBalanceUserIds,
+      billingConfig
     }
   );
-  const bot = new Bot(botToken);
+  let webhookServer: Server | undefined;
   let shuttingDown = false;
 
   const stopBot = (signal: NodeJS.Signals): void => {
@@ -96,6 +153,9 @@ export async function main(): Promise<void> {
       "Received shutdown signal"
     );
     bot.stop();
+    if (webhookServer) {
+      webhookServer.close();
+    }
     store.close();
   };
 
@@ -108,6 +168,9 @@ export async function main(): Promise<void> {
     }
     const startedAt = Date.now();
     const event = toMessageEvent(ctx);
+    if (event.command === "/start") {
+      balanceStore.ensureBalance(event.userId);
+    }
     const result = await runWithTypingIndicator(ctx, () => runtime.processEvent(event));
     await sendMessages(ctx, result.messages);
 
@@ -161,6 +224,19 @@ export async function main(): Promise<void> {
     );
   });
 
+  if (billingConfig.tributeApiSecret) {
+    const webhookPort = parsePort(process.env.WEBHOOK_PORT) ?? parsePort(process.env.PORT) ?? 3100;
+    webhookServer = await startTributeWebhookServer({
+      port: webhookPort,
+      bot,
+      billingConfig,
+      balanceStore,
+      analytics,
+      store,
+      logger
+    });
+  }
+
   let startupAttempt = 0;
   while (!shuttingDown) {
     try {
@@ -201,6 +277,307 @@ export async function main(): Promise<void> {
       );
       await sleep(retryDelayMs);
     }
+  }
+}
+
+function parseUserIdSet(raw: string | undefined): Set<string> {
+  return new Set(
+    (raw ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+  );
+}
+
+function parsePort(rawValue: string | undefined): number | null {
+  if (!rawValue) {
+    return null;
+  }
+  const value = Number(rawValue);
+  if (!Number.isInteger(value) || value <= 0 || value > 65_535) {
+    return null;
+  }
+  return value;
+}
+
+async function startTributeWebhookServer(input: {
+  port: number;
+  bot: Bot;
+  billingConfig: BillingConfig;
+  balanceStore: BalanceStore;
+  analytics: AnalyticsService;
+  store: SqliteStore;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<Server> {
+  const server = createServer((req, res) => {
+    void handleTributeWebhookRequest(req, res, input);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: unknown): void => reject(error);
+    server.once("error", onError);
+    server.listen(input.port, () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+
+  input.logger.info(
+    toSafeLog({
+      outcome: "tribute_webhook_started",
+      details: {
+        port: input.port
+      }
+    }),
+    "Tribute webhook server started"
+  );
+
+  return server;
+}
+
+async function handleTributeWebhookRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  input: {
+    bot: Bot;
+    billingConfig: BillingConfig;
+    balanceStore: BalanceStore;
+    analytics: AnalyticsService;
+    store: SqliteStore;
+    logger: ReturnType<typeof createLogger>;
+  }
+): Promise<void> {
+  const urlPath = req.url?.split("?")[0];
+  if (urlPath !== TRIBUTE_WEBHOOK_PATH) {
+    writeJson(res, 404, { error: "not found" });
+    return;
+  }
+  if (req.method !== "POST") {
+    writeJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  if (!input.billingConfig.isConfigured) {
+    input.logger.warn(
+      toSafeLog({
+        outcome: "tribute_webhook_billing_incomplete"
+      }),
+      "Billing is not fully configured for webhook handling"
+    );
+    writeJson(res, 503, { error: "billing not configured" });
+    return;
+  }
+
+  try {
+    const rawBody = await readRequestBody(req, WEBHOOK_MAX_BODY_BYTES);
+    const signatureHeader = getSignatureHeader(req);
+
+    if (
+      !verifyTributeSignature({
+        rawBody,
+        signatureHeader,
+        apiSecret: input.billingConfig.tributeApiSecret ?? ""
+      })
+    ) {
+      input.logger.warn(
+        toSafeLog({
+          outcome: "tribute_webhook_invalid_signature"
+        }),
+        "Invalid Tribute signature"
+      );
+      writeJson(res, 401, { error: "invalid signature" });
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8"));
+    } catch {
+      input.logger.warn(
+        toSafeLog({
+          outcome: "tribute_webhook_unparseable"
+        }),
+        "Webhook payload is not valid JSON"
+      );
+      writeJson(res, 200, { ok: true, ignored: true });
+      return;
+    }
+
+    const event = parseTributeWebhookEvent(payload);
+    if (!event || !KNOWN_TRIBUTE_EVENTS.has(event.eventType)) {
+      input.logger.info(
+        toSafeLog({
+          outcome: "tribute_webhook_ignored"
+        }),
+        "Webhook event ignored"
+      );
+      writeJson(res, 200, { ok: true, ignored: true });
+      return;
+    }
+
+    const amount = input.billingConfig.productMap[event.productId];
+    if (!amount) {
+      input.logger.info(
+        toSafeLog({
+          outcome: "tribute_webhook_unknown_product",
+          details: {
+            productId: event.productId
+          }
+        }),
+        "Unknown Tribute product id"
+      );
+      writeJson(res, 200, { ok: true, ignored: true });
+      return;
+    }
+
+    if (event.eventType === "digital_product_refunded") {
+      input.logger.warn(
+        toSafeLog({
+          outcome: "tribute_webhook_refund",
+          details: {
+            purchaseId: event.purchaseId,
+            userId: event.telegramId
+          }
+        }),
+        "Digital product refunded (no balance deduction yet)"
+      );
+      writeJson(res, 200, { ok: true, refund_logged: true });
+      return;
+    }
+
+    const credited = input.balanceStore.addBalance(event.telegramId, amount, "tribute_purchase", event.purchaseId);
+    if (!credited.credited) {
+      input.logger.info(
+        toSafeLog({
+          outcome: "tribute_webhook_duplicate",
+          details: {
+            purchaseId: event.purchaseId
+          }
+        }),
+        "Duplicate Tribute purchase id"
+      );
+      writeJson(res, 200, { ok: true, credited: false });
+      return;
+    }
+
+    const latestSessionId = input.store.getLatestSessionForUser(event.telegramId)?.id ?? `purchase:${event.purchaseId}`;
+    input.analytics.emitEvent({
+      event: "purchase_completed",
+      userId: event.telegramId,
+      sessionId: latestSessionId
+    });
+
+    try {
+      await input.bot.api.sendMessage(
+        event.telegramId,
+        `✅ Баланс пополнен! +${amount} сообщений\n💬 Баланс: ${credited.balance}`
+      );
+    } catch (error) {
+      input.logger.warn(
+        toSafeLog({
+          outcome: "tribute_webhook_notify_failed",
+          details: {
+            error: error instanceof Error ? error.message : "unknown",
+            userId: event.telegramId
+          }
+        }),
+        "Failed to send purchase notification"
+      );
+    }
+
+    input.logger.info(
+      toSafeLog({
+        outcome: "tribute_webhook_success",
+        details: {
+          userId: event.telegramId,
+          purchaseId: event.purchaseId,
+          amount
+        }
+      }),
+      "Webhook credited user balance"
+    );
+    writeJson(res, 200, { ok: true, credited: true });
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      writeJson(res, 413, { error: "payload too large" });
+      return;
+    }
+
+    input.logger.error(
+      toSafeLog({
+        outcome: "tribute_webhook_error",
+        details: {
+          error: error instanceof Error ? error.message : "unknown"
+        }
+      }),
+      "Unhandled Tribute webhook error"
+    );
+    writeJson(res, 500, { error: "internal error" });
+  }
+}
+
+async function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let rejected = false;
+
+    req.on("data", (chunk: Buffer | string) => {
+      if (rejected) {
+        return;
+      }
+      const asBuffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      totalBytes += asBuffer.length;
+      if (totalBytes > maxBytes) {
+        rejected = true;
+        reject(new RequestBodyTooLargeError());
+        return;
+      }
+      chunks.push(asBuffer);
+    });
+
+    req.on("end", () => {
+      if (rejected) {
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+
+    req.on("error", (error) => {
+      if (rejected) {
+        return;
+      }
+      reject(error);
+    });
+  });
+}
+
+function getSignatureHeader(req: IncomingMessage): string | undefined {
+  const headers = [
+    req.headers["trbt-signature"],
+    req.headers["x-tribute-signature"],
+    req.headers["tribute-signature"]
+  ];
+
+  for (const header of headers) {
+    if (typeof header === "string") {
+      return header;
+    }
+    if (Array.isArray(header) && header.length > 0) {
+      return header[0];
+    }
+  }
+  return undefined;
+}
+
+function writeJson(res: ServerResponse, statusCode: number, body: Record<string, unknown>): void {
+  res.statusCode = statusCode;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(body));
+}
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super("Request body exceeds limit.");
   }
 }
 
@@ -307,7 +684,7 @@ function toPersistentReplyKeyboard(keyboard: ReplyKeyboard): {
     keyboard: keyboard.map((row) => row.map((text) => ({ text }))),
     resize_keyboard: true,
     is_persistent: true,
-    input_field_placeholder: "Напиши сообщение..."
+    input_field_placeholder: "Расскажи, что случилось..."
   };
 }
 

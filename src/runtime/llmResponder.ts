@@ -16,7 +16,7 @@ import {
   type NewMemoryInput,
   SqliteStore
 } from "../state/store.js";
-import type { LLMResponder } from "../telegram/bot.js";
+import type { GenerateResult, LLMResponder } from "../telegram/bot.js";
 import type { LLMTask, OutgoingMessage } from "../telegram/uxHandlers.js";
 import { estimateTotalTokens } from "../utils/tokenCount.js";
 import { formatPanelFallback, formatSingleFallback, formatSummaryFallback } from "./modeFallbacks.js";
@@ -68,7 +68,7 @@ export class OpenAILLMResponder implements LLMResponder {
     userId: string;
     task: LLMTask;
     state: UserSessionState;
-  }): Promise<OutgoingMessage[]> {
+  }): Promise<GenerateResult> {
     const { task, userId, state } = input;
 
     this.store.ensureSession({
@@ -89,7 +89,7 @@ export class OpenAILLMResponder implements LLMResponder {
         sessionId: state.sessionId
       });
       const crisis = getCrisisResponder();
-      return [{ text: crisis.text, keyboard: safetyHoldKeyboard() }];
+      return { messages: [{ text: crisis.text, keyboard: safetyHoldKeyboard() }], billable: false };
     }
     if (safety === "soft") {
       this.analytics?.emitEvent({
@@ -98,7 +98,7 @@ export class OpenAILLMResponder implements LLMResponder {
         sessionId: state.sessionId
       });
       const soft = getSafetyCheck();
-      return [{ text: soft.text, keyboard: safetyKeyboard() }];
+      return { messages: [{ text: soft.text, keyboard: safetyKeyboard() }], billable: false };
     }
 
     const isForcedMode = task.mode === "PANEL" || task.mode === "SUMMARY";
@@ -125,14 +125,14 @@ export class OpenAILLMResponder implements LLMResponder {
         sessionId: state.sessionId
       });
       const crisis = getCrisisResponder();
-      return [{ text: crisis.text, keyboard: safetyHoldKeyboard() }];
+      return { messages: [{ text: crisis.text, keyboard: safetyHoldKeyboard() }], billable: false };
     }
 
     const effectiveMode = policy.mode;
     const persona = effectiveMode === "SINGLE" ? task.persona : undefined;
     const toolScenario = effectiveMode === "SINGLE" || effectiveMode === "PANEL" ? task.scenario ?? null : null;
     if (effectiveMode === "SINGLE" && !persona) {
-      return [{ text: formatSingleFallback("yan") }];
+      return { messages: [{ text: formatSingleFallback("yan") }], billable: false };
     }
 
     const instructions = buildPromptInstructions({
@@ -167,7 +167,10 @@ export class OpenAILLMResponder implements LLMResponder {
       sessionId: state.sessionId
     });
 
-    return splitMessage(formatted).map((text) => ({ text }));
+    return {
+      messages: splitMessage(formatted).map((text): OutgoingMessage => ({ text })),
+      billable: true
+    };
   }
 
   clearLongTerm(userId: string): void {

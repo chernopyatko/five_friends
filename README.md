@@ -17,10 +17,19 @@
 - `SQLITE_PATH` (опционально; по умолчанию `data/bot.sqlite`)
 - `BOT_USERNAME` (рекомендуется; без него share-ссылки работают в degraded-режиме с placeholder)
 - `ANALYTICS_HTTP_ENDPOINT` (опционально; HTTP-forward аналитики)
-- `ADMIN_USER_IDS` (опционально; CSV Telegram user_id для `/stats`)
+- `ADMIN_USER_IDS` (опционально; CSV Telegram user_id для `/stats`; также bypass монетизации)
 - `LOG_LEVEL`
 - `DEBUG_LOG_TEXT` (локально; по умолчанию 0)
 - `METRICS_ENABLED`
+
+### Billing (Tribute)
+- `TRIBUTE_API_SECRET` (webhook HMAC-ключ; если пуст — монетизация отключена, безлимит для всех)
+- `TRIBUTE_LINK_SMALL` (URL пакета 50 сообщений / 299₽)
+- `TRIBUTE_LINK_MEDIUM` (URL пакета 150 / 599₽)
+- `TRIBUTE_LINK_LARGE` (URL пакета 350 / 999₽)
+- `TRIBUTE_PRODUCT_MAP` (JSON: `{"product_id": amount}`, например `{"456":50,"457":150,"458":350}`)
+- `WEBHOOK_PORT` (порт webhook-сервера; по умолчанию `3100`)
+- `BYPASS_BALANCE_USER_IDS` (опционально; CSV user_id с безлимитным доступом, дополнительно к `ADMIN_USER_IDS`)
 
 Модельная политика фиксирована по режимам (см. `MODEL_POLICY.md`); `OPENAI_MODEL` в runtime не используется.
 
@@ -58,6 +67,11 @@
 10) Реферал: `/start ref_<code>` c другого аккаунта → атрибуция в `users.inviter_user_id`.
 11) После `🚀 Спросить всех`/`📝`/`💬`/`📋` появляется кнопка `Посоветовать бота`.
 12) `/stats` у админа показывает агрегаты, у не-админа ответ `Недостаточно прав.`
+13) `/balance` → показывает текущий баланс и кнопки пополнения (при настроенном billing).
+14) Баланс = 0 → paywall «Друзья на паузе ☕» с кнопками покупки, LLM не вызывается.
+15) Баланс → 0 после ответа → grace message с кнопками пополнения.
+16) Баланс ≤ 3 → soft nudge footer.
+17) Покупка через Tribute → уведомление «✅ Баланс пополнен!», баланс начислен.
 
 Пример analytics события в stdout:
 ```json

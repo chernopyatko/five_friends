@@ -72,7 +72,8 @@ describe("llm responder persistence", () => {
     });
     await responder.drainMemoryUpdates();
 
-    expect(generated[0]?.text).toContain("🧠 Ян — Разум");
+    expect(generated.billable).toBe(true);
+    expect(generated.messages[0]?.text).toContain("🧠 Ян — Разум");
     expect(store.listSessionMessages("session-1", 20)).toHaveLength(2);
     expect(store.getSessionById("session-1")?.rollingSummary).toContain("Итого:");
     expect(store.listLongTermMemories("u1", 10)).toHaveLength(1);

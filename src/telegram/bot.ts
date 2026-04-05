@@ -2,13 +2,27 @@ import { UXHandlers, type IncomingEvent, type HandleResult, type LLMTask, type O
 import type { UserSessionState } from "../state/session.js";
 import type { Logger as PinoLogger } from "pino";
 
+import type { BalanceStore } from "../billing/balanceStore.js";
+import type { BillingConfig } from "../billing/config.js";
+import { resolveMessageCost } from "../billing/costs.js";
 import { buildShareLink } from "../growth/share.js";
 import type { ReferralService } from "../growth/referral.js";
 import type { AnalyticsEventName, AnalyticsService } from "../observability/analytics.js";
-import { shareKeyboard } from "./keyboard.js";
+import { paywallKeyboard, shareKeyboard } from "./keyboard.js";
+
+const PAYWALL_TEXT =
+  "Друзья на паузе ☕\n\n" +
+  "Бесплатные разговоры закончились. Пополни баланс, чтобы продолжить — ребята ждут.";
+const GRACE_TEXT =
+  "💬 Это было последнее сообщение. Чтобы продолжить разбираться вместе — пополни баланс:";
+
+export interface GenerateResult {
+  messages: OutgoingMessage[];
+  billable: boolean;
+}
 
 export interface LLMResponder {
-  generate(input: { userId: string; task: LLMTask; state: UserSessionState }): Promise<OutgoingMessage[]>;
+  generate(input: { userId: string; task: LLMTask; state: UserSessionState }): Promise<GenerateResult>;
   clearLongTerm?(userId: string): Promise<void> | void;
   resetSession?(input: { userId: string; previousSessionId: string; newSessionId: string }): Promise<void> | void;
 }
@@ -20,6 +34,10 @@ export class BotRuntime {
   private readonly analytics?: AnalyticsService;
   private readonly botUsername?: string;
   private readonly logger?: PinoLogger;
+  private readonly balanceStore?: BalanceStore;
+  private readonly bypassBalanceUserIds: Set<string>;
+  private readonly billingConfig?: BillingConfig;
+  private readonly billingConfigured: boolean;
   private readonly userQueues = new Map<string, Promise<HandleResult>>();
 
   constructor(
@@ -30,6 +48,9 @@ export class BotRuntime {
       analytics?: AnalyticsService;
       botUsername?: string;
       logger?: PinoLogger;
+      balanceStore?: BalanceStore;
+      bypassBalanceUserIds?: Set<string>;
+      billingConfig?: BillingConfig;
     }
   ) {
     this.handlers = handlers;
@@ -38,6 +59,10 @@ export class BotRuntime {
     this.analytics = options?.analytics;
     this.botUsername = options?.botUsername;
     this.logger = options?.logger;
+    this.balanceStore = options?.balanceStore;
+    this.bypassBalanceUserIds = options?.bypassBalanceUserIds ?? new Set<string>();
+    this.billingConfig = options?.billingConfig;
+    this.billingConfigured = options?.billingConfig?.isConfigured ?? false;
   }
 
   processEvent(event: IncomingEvent): Promise<HandleResult> {
@@ -77,13 +102,34 @@ export class BotRuntime {
       // already logged at startup (startup_without_llm), not a per-message error.
       return withGenerationFailure(result);
     }
+    const isBypass = !this.billingConfigured || this.bypassBalanceUserIds.has(event.userId);
+    if (!isBypass && this.balanceStore && this.billingConfig) {
+      this.balanceStore.ensureBalance(event.userId);
+      const cost = resolveMessageCost(result.llmTask.mode);
+      const balance = this.balanceStore.getBalance(event.userId);
+      if (balance < cost) {
+        this.analytics?.emitEvent({
+          event: "paywall_shown",
+          userId: event.userId,
+          sessionId: result.state.sessionId
+        });
+        return {
+          ...result,
+          messages: [{
+            text: PAYWALL_TEXT,
+            keyboard: paywallKeyboard(this.billingConfig.tributeLinks)
+          }]
+        };
+      }
+    }
 
     try {
-      const generatedMessages = await this.responder.generate({
+      const generation = await this.responder.generate({
         userId: event.userId,
         task: result.llmTask,
         state: result.state
       });
+      const generatedMessages = generation.messages;
 
       if (generatedMessages.length === 0) {
         this.analytics?.emitEvent({
@@ -95,15 +141,58 @@ export class BotRuntime {
       }
 
       const mergedMessages = mergeMessagesWithGenerated(result.messages, generatedMessages, result.llmTask.mode);
-      const postGenerationEvent = resolvePostGenerationEvent(result.llmTask);
-      if (postGenerationEvent) {
-        this.analytics?.emitEvent({
-          event: postGenerationEvent,
-          userId: event.userId,
-          sessionId: result.state.sessionId
-        });
+      if (generation.billable) {
+        const postGenerationEvent = resolvePostGenerationEvent(result.llmTask);
+        if (postGenerationEvent) {
+          this.analytics?.emitEvent({
+            event: postGenerationEvent,
+            userId: event.userId,
+            sessionId: result.state.sessionId
+          });
+        }
       }
-      const withShare = this.appendShareMessageIfNeeded(result.llmTask, event.userId, mergedMessages);
+
+      if (!isBypass && this.balanceStore && generation.billable && this.billingConfig) {
+        const cost = resolveMessageCost(result.llmTask.mode);
+        try {
+          this.balanceStore.deductBalance(event.userId, cost, result.llmTask.mode);
+          const newBalance = this.balanceStore.getBalance(event.userId);
+
+          if (newBalance === 0) {
+            mergedMessages.push({
+              text: GRACE_TEXT,
+              keyboard: paywallKeyboard(this.billingConfig.tributeLinks)
+            });
+          } else if (newBalance <= 3) {
+            const lastMsg = mergedMessages[mergedMessages.length - 1];
+            if (lastMsg) {
+              lastMsg.text += `\n\n💬 Осталось ${newBalance} — пополни, чтобы ребята были на связи.`;
+            }
+          } else if (newBalance <= 10) {
+            const lastMsg = mergedMessages[mergedMessages.length - 1];
+            if (lastMsg) {
+              lastMsg.text += `\n\n💬 Баланс: ${newBalance}`;
+            }
+          }
+        } catch (error) {
+          this.logger?.warn(
+            {
+              outcome: "balance_deduct_failed",
+              details: {
+                userId: event.userId,
+                mode: result.llmTask.mode,
+                error: error instanceof Error ? error.message : "unknown"
+              }
+            },
+            "Failed to deduct balance after generation"
+          );
+        }
+      }
+
+      const withShare = generation.billable
+        ? this.appendShareMessageIfNeeded(result.llmTask, event.userId, mergedMessages)
+        : mergedMessages;
+
       return {
         ...result,
         messages: withShare
@@ -158,7 +247,7 @@ function mergeMessagesWithGenerated(
 }
 
 function withGenerationFailure(result: HandleResult): HandleResult {
-  const fallback = "Не удалось получить ответ от GPT. Попробуй отправить сообщение ещё раз.";
+  const fallback = "Что-то пошло не так. Попробуй отправить сообщение ещё раз.";
   if (!result.llmTask) {
     return result;
   }

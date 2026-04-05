@@ -9,6 +9,7 @@ describe("index command parsing", () => {
     expect(parseSupportedCommand("/reset now")).toEqual({ command: "/reset", payload: undefined });
     expect(parseSupportedCommand("/settings")).toEqual({ command: "/settings", payload: undefined });
     expect(parseSupportedCommand("/demo")).toEqual({ command: "/demo", payload: undefined });
+    expect(parseSupportedCommand("/balance")).toEqual({ command: "/balance", payload: undefined });
   });
 
   it("extracts /start payload for deep links", () => {

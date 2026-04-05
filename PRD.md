@@ -77,3 +77,11 @@
 - Репетиция разговора (multi-turn rehearsal).
 - NLP-роутинг сложных intent-классов без кнопок.
 - Инструмент `Разбор` как отдельный режим.
+- Voice input (STT).
+- Image input (multimodal).
+- Daily reminders (autonomous proactive messages).
+
+## 10) Future (next iteration)
+- **Voice input**: STT через OpenAI Whisper API → транскрипт обрабатывается как обычный текст. grammY `message:voice` handler. Биллинг: 1 сообщение.
+- **Image input (multimodal)**: скриншоты переписок → анализ через vision-capable модель (input_image в Responses API). Биллинг: 2–3 сообщения.
+- **Daily reminders**: автономные push-сообщения для retention. Бот отправляет напоминание «напиши, как дела» без триггера от пользователя. Расписание настраивается; бот не «засыпает» между сессиями (cron / setInterval). Тон — от выбранного друга.
