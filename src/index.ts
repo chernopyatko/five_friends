@@ -380,13 +380,7 @@ async function handleTributeWebhookRequest(
     ) {
       input.logger.warn(
         toSafeLog({
-          outcome: "tribute_webhook_invalid_signature",
-          details: {
-            hasSignatureHeader: !!signatureHeader,
-            signatureHeaderPrefix: signatureHeader?.slice(0, 12) ?? "none",
-            bodyLength: rawBody.length,
-            secretLength: (input.billingConfig.tributeApiSecret ?? "").length
-          }
+          outcome: "tribute_webhook_invalid_signature"
         }),
         "Invalid Tribute signature"
       );
