@@ -145,9 +145,12 @@
 
 **DoD:**
 - `bot.on("message:voice")` скачивает .ogg, отправляет в OpenAI Whisper API.
+- Скачанные аудио файлы удаляются после обработки.
+- Privacy notice: юзер информируется о передаче голоса в OpenAI (при первом использовании).
 - Транскрипт передаётся в существующий пайплайн как `userText`.
 - Биллинг: 1 сообщение (как SINGLE).
-- Graceful error если файл >20 MB или STT недоступен.
+- Graceful error если файл >25 MB или STT недоступен.
+- Rate limit: макс N STT запросов в час на юзера (конфигурируемый).
 
 **Verify:**
 - unit-test для speechToText (mock OpenAI)
@@ -159,9 +162,12 @@
 **Файлы:** src/telegram/photoHandler.ts, src/llm/generator.ts (расширение)
 
 **DoD:**
-- `bot.on("message:photo")` скачивает фото, передаёт как `input_image` в Responses API.
+- `bot.on("message:photo")` скачивает фото, передаёт как `input_image` в OpenAI Chat Completions API (vision).
+- Скачанные изображения удаляются после обработки.
+- Privacy notice: юзер информируется о передаче изображений в OpenAI (при первом использовании).
+- Поддержка форматов: JPEG, PNG, WebP (до 20 MB).
 - `GeneratorInput` поддерживает optional `imageUrl`.
-- Биллинг: 2–3 сообщения.
+- Биллинг: detail=low — 2 сообщения, detail=high — 3 сообщения.
 
 **Verify:**
 - unit-test для расширенного generator
@@ -173,12 +179,15 @@
 **Файлы:** src/scheduler/reminderScheduler.ts, src/scheduler/reminderTemplates.ts, tests/scheduler/reminderScheduler.test.ts
 
 **DoD:**
-- Фоновый cron/setInterval отправляет push-сообщение неактивным юзерам (configurable интервал, default 24h).
+- DB-based scheduler (или внешний cron) отправляет push-сообщение неактивным юзерам.
+- «Неактивный» = нет сообщений/сессий последние 24h (configurable).
+- Reminder state хранится в DB (`last_reminder_sent_at`), переживает рестарты.
 - Тон напоминания — от `currentPersona` юзера (например Макс шутит, Наташа мягко спрашивает).
 - Юзер может отключить напоминания через `/settings`.
-- Бот не засыпает между сессиями: scheduler живёт в основном процессе.
+- Privacy: юзер информируется о трекинге активности для напоминаний.
 - Respectful: не более 1 напоминания в сутки, mute после opt-out.
 - Graceful: если `sendMessage` упал (юзер заблокировал бота) — логируем и не повторяем.
+- TEST_MODE: env var для сокращённого интервала (5 минут для smoke тестов).
 
 **Verify:**
 - unit-test: scheduler вызывает sendMessage для inactive users, не вызывает для opted-out

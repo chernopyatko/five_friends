@@ -52,8 +52,8 @@ export async function main(): Promise<void> {
   });
   const balanceStore = new BalanceStore(store.getDb());
   const billingConfig = loadBillingConfig();
-  const billingDisableReason = !billingConfig.tributeApiSecret ? "TRIBUTE_API_SECRET_MISSING" : "BILLING_CONFIG_INCOMPLETE";
   if (!billingConfig.isConfigured) {
+    const billingDisableReason = !billingConfig.tributeApiSecret ? "TRIBUTE_API_SECRET_MISSING" : "BILLING_CONFIG_INCOMPLETE";
     logger.warn(
       toSafeLog({
         outcome: "startup_billing_disabled",

@@ -79,12 +79,12 @@
 
 ## 8. Конкретные правки в продукте (TODO)
 
-- [x] Убрать «от GPT» из fallback-текста ошибки в [bot.ts](cci:7://file:///Users/ivanchernopyatko/ai%20friends/src/telegram/bot.ts:0:0-0:0)
-- [x] Заменить дефолтный `input_field_placeholder` в [index.ts](cci:7://file:///Users/ivanchernopyatko/ai%20friends/src/index.ts:0:0-0:0)
-- [x] Убрать «ИИ» из BotFather description в [COPY.md](cci:7://file:///Users/ivanchernopyatko/ai%20friends/COPY.md:0:0-0:0)
+- [x] Убрать «от GPT» из fallback-текста ошибки в [bot.ts](src/telegram/bot.ts)
+- [x] Заменить дефолтный `input_field_placeholder` в [index.ts](src/index.ts)
+- [x] Убрать «ИИ» из BotFather description в [COPY.md](COPY.md)
 - [x] Переписать `/start` текст — сдвинуть акцент с «подобрать слова» на «разобраться в ситуации»
 - [x] Написать paywall-тексты в ToV бренда (до запуска монетизации)
-- [~] ~~Добавить мягкий дисклеймер в `/help`~~ — отклонено: продукт не говорит про терапию, дисклеймер звучит неуместно
+- [x] ~~Добавить мягкий дисклеймер в `/help`~~ — **отклонено**: продукт не говорит про терапию, дисклеймер звучит неуместно
 - [x] Сделать PANEL максимально заметным в onboarding (не mandatory)
 
 ---

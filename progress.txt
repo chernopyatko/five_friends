@@ -9,9 +9,9 @@ IN PROGRESS
 
 NEXT
 - PHASE D: минимальный runnable skeleton
-- PHASE 2.1: voice input (STT через Whisper)
-- PHASE 2.2: image input (multimodal, после voice)
-- PHASE 2.3: daily reminders (retention, автономные push)
+- PHASE E: voice input (STT через Whisper)
+- PHASE F: image input (multimodal, после voice)
+- PHASE G: daily reminders (retention, автономные push)
 
 KNOWN BUGS
 - none

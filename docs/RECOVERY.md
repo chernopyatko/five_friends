@@ -30,24 +30,42 @@ SELECT * FROM user_balance WHERE user_id = '<USER_TELEGRAM_ID>';
 
 ## Ручное начисление
 
-Если транзакции нет — начислить вручную:
+Если транзакции нет — начислить вручную.
+
+**Перед ручным начислением:**
+
+1. Проверить, что транзакции с таким `tribute_order_id` ещё нет:
+```sql
+SELECT COUNT(*) FROM balance_transactions WHERE tribute_order_id = '<ORDER_ID>';
+```
+Если возвращает > 0 — не начислять, уже есть в базе.
+
+2. Проверить фактическую сумму и статус платежа в панели Tribute.
+
+3. Сделать бэкап базы данных перед выполнением (рекомендуется).
+
+**Начисление** (заменить `<AMOUNT>` на реальную сумму сообщений из пакета):
 
 ```sql
+BEGIN TRANSACTION;
+
 INSERT INTO balance_transactions (id, user_id, amount, reason, tribute_order_id, created_at)
 VALUES (
   lower(hex(randomblob(16))),
   '<USER_TELEGRAM_ID>',
-  50,
+  <AMOUNT>,
   'manual_grant',
   '<ORDER_ID>',
   unixepoch() * 1000
 );
 
 UPDATE user_balance
-SET balance = balance + 50,
-    total_purchased = total_purchased + 50,
+SET balance = balance + <AMOUNT>,
+    total_purchased = total_purchased + <AMOUNT>,
     updated_at = unixepoch() * 1000
 WHERE user_id = '<USER_TELEGRAM_ID>';
+
+COMMIT;
 ```
 
 **Критично**: всегда заполнять `tribute_order_id` при ручном гранте, чтобы повторный webhook (если дойдёт позже) не начислил дважды.
@@ -61,3 +79,8 @@ SELECT * FROM balance_transactions WHERE user_id = '<USER_TELEGRAM_ID>' ORDER BY
 ## Killswitch
 
 Отключение монетизации: убрать `TRIBUTE_*` env vars + **restart процесса** (redeploy / `pm2 restart` / `systemctl restart`). Занимает < 30 секунд.
+
+**Важно — in-flight webhooks:**
+- Webhooks, полученные во время рестарта (~30 сек), будут потеряны. Tribute повторяет доставку в течение 24 часов.
+- После включения обратно — проверьте логи на пропущенные платежи и начислите вручную при необходимости.
+- Альтернатива с меньшим риском: временно возвращать 503 из webhook-эндпоинта (не убирать env vars, а добавить env `BILLING_KILLSWITCH=1`), чтобы Tribute гарантированно повторил доставку.

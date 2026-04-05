@@ -83,6 +83,7 @@ export class BalanceStore {
   addBalance(userId: string, amount: number, reason: string, tributeOrderId?: string): { credited: boolean; balance: number } {
     assertPositiveInteger(amount, "amount");
     assertNonEmptyString(reason, "reason");
+    const normalizedTributeOrderId = tributeOrderId?.trim() || null;
 
     this.ensureBalance(userId, 0);
 
@@ -94,12 +95,10 @@ export class BalanceStore {
       `);
 
       try {
-        insertTx.run(randomUUID(), userId, amount, reason, tributeOrderId ?? null, now);
+        insertTx.run(randomUUID(), userId, amount, reason, normalizedTributeOrderId, now);
       } catch (err: unknown) {
-        if (
-          err instanceof Error &&
-          err.message.includes("UNIQUE constraint failed: balance_transactions.tribute_order_id")
-        ) {
+        const sqliteErr = err as { code?: string };
+        if (sqliteErr.code === "SQLITE_CONSTRAINT_UNIQUE") {
           return { credited: false, balance: this.getBalance(userId) };
         }
         throw err;

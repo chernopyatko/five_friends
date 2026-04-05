@@ -27,7 +27,7 @@ Add:
 ```sql
 CREATE TABLE IF NOT EXISTS user_balance (
   user_id TEXT PRIMARY KEY,
-  balance INTEGER NOT NULL DEFAULT 10,
+  balance INTEGER NOT NULL DEFAULT 15,
   total_purchased INTEGER NOT NULL DEFAULT 0,
   total_spent INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
@@ -62,7 +62,7 @@ export function resolveMessageCost(mode: BotMode): number {
 
 ### 3. New file `src/billing/balanceStore.ts`
 Create `BalanceStore` with methods:
-- `ensureBalance(userId, initialBalance=10)`
+- `ensureBalance(userId, initialBalance=15)`
 - `getBalance(userId)`
 - `deductBalance(userId, amount, reason)` with guard `amount > 0`
 - `addBalance(userId, amount, reason, tributeOrderId?)` with guard `amount > 0`, idempotency by UNIQUE catch
@@ -195,7 +195,7 @@ if (this.bypassBalanceUserIds.has(userId)) {
   return { messages: [{ text: "💬 У тебя безлимитный доступ ♾️" }] };
 }
 if (!this.billingConfig?.isConfigured) {
-  return { messages: [{ text: "� Сейчас все разговоры бесплатны." }] };
+  return { messages: [{ text: "💬 Сейчас все разговоры бесплатны." }] };
 }
 if (!this.balanceStore) {
   return { messages: [{ text: "💬 Сейчас все разговоры бесплатны." }] };
