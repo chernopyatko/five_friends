@@ -2,12 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BalanceStore } from "../../src/billing/balanceStore.js";
 import type { BillingConfig } from "../../src/billing/config.js";
 import { ReferralService } from "../../src/growth/referral.js";
 import { AnalyticsService } from "../../src/observability/analytics.js";
+import { createInitialSessionState } from "../../src/state/session.js";
 import { SqliteStore } from "../../src/state/store.js";
 import { BotRuntime } from "../../src/telegram/bot.js";
 import { UXHandlers } from "../../src/telegram/uxHandlers.js";
@@ -380,6 +381,74 @@ describe("bot runtime hooks", () => {
 
     expect(result.messages).toHaveLength(1);
     expect(balanceStore.getBalance(userId)).toBe(5);
+    const toolWrite = deps.store
+      .getDb()
+      .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
+      .get("tool_write_for_me");
+    expect(Number(toolWrite?.total ?? 0)).toBe(0);
+  });
+
+  it("bypasses billing, share and billable analytics for forceFree llm tasks", async () => {
+    const deps = createGrowthDeps();
+    const balanceStore = new BalanceStore(deps.store.getDb());
+    const userId = "u-force-free";
+    balanceStore.ensureBalance(userId, 0);
+
+    const state = createInitialSessionState({
+      sessionId: "force-free-session",
+      now: 1_000
+    });
+
+    const handlers = {
+      handleEvent: vi.fn(() => ({
+        messages: [{ text: "preface" }],
+        state,
+        llmTask: {
+          mode: "SINGLE",
+          persona: "yan",
+          scenario: "compose",
+          userText: "Сформулируй сообщение коллеге",
+          forceFree: true
+        }
+      }))
+    } as unknown as UXHandlers;
+
+    const generate = vi.fn(async () => ({
+      messages: [{ text: "🧠 Ян — Разум\nПривет, давай начнем с малого шага." }],
+      billable: true
+    }));
+
+    const runtime = new BotRuntime(
+      handlers,
+      { generate },
+      {
+        referrals: deps.referrals,
+        analytics: deps.analytics,
+        botUsername: "my_test_bot",
+        balanceStore,
+        bypassBalanceUserIds: new Set(),
+        billingConfig: configuredBillingConfig()
+      }
+    );
+
+    const result = await runtime.processEvent({
+      updateId: 1,
+      userId,
+      text: "любой вход"
+    });
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.text).toContain("Привет, давай начнем");
+    expect(result.messages[0]?.text).not.toBe("Что дальше?");
+    expect(balanceStore.getBalance(userId)).toBe(0);
+
+    const paywallShown = deps.store
+      .getDb()
+      .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
+      .get("paywall_shown");
+    expect(Number(paywallShown?.total ?? 0)).toBe(0);
+
     const toolWrite = deps.store
       .getDb()
       .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")

@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import {
   balanceInfoKeyboard,
+  coldStartChatKeyboard,
+  coldStartKeyboard,
+  coldStartMessageKeyboard,
+  friendPickerKeyboard,
   demoTryKeyboard,
   forgetConfirmKeyboard,
   friendsKeyboard,
@@ -38,6 +42,9 @@ const START_TEXT =
   "🌀 Аня — задаст точный вопрос про главное\n" +
   "🎯 Макс — пошутит, вернёт на землю и отделит факты от эмоций\n\n" +
   "Выбирай нужный инструмент в меню ниже или просто пиши свой вопрос прямо сюда!";
+const COLD_START_TEXT =
+  "Привет! Здесь живут 4 друга — каждый помогает по-своему.\n\n" +
+  "Что привело тебя сюда?";
 const HELP_TEXT =
   "❓ Как тут всё устроено\n" +
   "Здесь живут 4 ИИ-друга. Ты выбираешь друга и пишешь как обычно.\n\n" +
@@ -109,6 +116,7 @@ export interface LLMTask {
   persona?: Persona;
   scenario?: ToolScenario | null;
   userText: string;
+  forceFree?: boolean;
 }
 
 export class UXHandlers {
@@ -233,7 +241,8 @@ export class UXHandlers {
         return {
           messages: [
             {
-              text: START_TEXT,
+              text: COLD_START_TEXT,
+              keyboard: coldStartKeyboard(),
               replyKeyboard: mainReplyKeyboard()
             }
           ]
@@ -395,6 +404,121 @@ export class UXHandlers {
       });
       return {
         messages: [{ text: formatShareLinkMessage(share.url) }]
+      };
+    }
+
+    if (callbackData === "cs_situation") {
+      state.lastPersonaBeforePanel = state.currentPersona;
+      state.pendingMode = "awaiting_panel_input";
+      state.pendingPanelScenario = null;
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{
+          text: "Расскажи что случилось — 4 друга разберут с разных сторон:\n\n" +
+            "🧠 Ян — разложит по полочкам и даст план\n" +
+            "❤️ Наташа — поддержит и назовёт чувства\n" +
+            "🌀 Аня — задаст точный вопрос про главное\n" +
+            "🎯 Макс — скажет как есть и отделит факты от эмоций\n\n" +
+            "Опиши ситуацию одним сообщением.",
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    if (callbackData === "cs_message") {
+      return {
+        messages: [{
+          text: "Что нужно?",
+          keyboard: coldStartMessageKeyboard(),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    if (callbackData === "cs_compose") {
+      state.pendingMode = "awaiting_compose_input";
+      state.pendingPanelScenario = null;
+      this.clearDangerConfirmations(state);
+      if (state.currentPersona === null) {
+        return {
+          messages: [{
+            text: "📝 Кто поможет сформулировать?\n\n" +
+              "🧠 Ян — выстроит логику и структуру\n" +
+              "❤️ Наташа — поможет назвать и выразить чувства\n" +
+              "🌀 Аня — найдёт главное, что ты хочешь сказать\n" +
+              "🎯 Макс — напишет живо, с иронией и без воды",
+            keyboard: friendPickerKeyboard(),
+            replyKeyboard: mainReplyKeyboard()
+          }]
+        };
+      }
+      return {
+        messages: [{
+          text: "📝 Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон.",
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    if (callbackData === "cs_reply") {
+      state.pendingMode = "awaiting_reply_input";
+      state.pendingPanelScenario = null;
+      this.clearDangerConfirmations(state);
+      if (state.currentPersona === null) {
+        return {
+          messages: [{
+            text: "💬 Кто поможет с ответом?\n\n" +
+              "🧠 Ян — разложит чужое сообщение и даст варианты\n" +
+              "❤️ Наташа — назовёт что ты чувствуешь и поможет из этого ответить\n" +
+              "🌀 Аня — увидит, что стоит за чужим сообщением\n" +
+              "🎯 Макс — ответит с юмором, коротко и по делу",
+            keyboard: friendPickerKeyboard(),
+            replyKeyboard: mainReplyKeyboard()
+          }]
+        };
+      }
+      return {
+        messages: [{
+          text: "💬 Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе.",
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    if (callbackData === "cs_chat") {
+      return {
+        messages: [{
+          text: "С кем хочешь поговорить?",
+          keyboard: coldStartChatKeyboard(),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    if (callbackData.startsWith("cs_chat_")) {
+      const persona = callbackData.replace("cs_chat_", "") as Persona;
+      if (!["yan", "natasha", "anya", "max"].includes(persona)) {
+        return { messages: [{ text: "Не понял выбор. Попробуй ещё раз." }] };
+      }
+      state.currentPersona = persona;
+      state.pendingMode = null;
+      state.pendingPanelScenario = null;
+      this.clearDangerConfirmations(state);
+      this.analytics?.emitEvent({
+        event: "choose_persona",
+        userId,
+        sessionId: state.sessionId
+      });
+      return {
+        messages: [{ text: `Сейчас с тобой ${personaLabel(persona)}.`, replyKeyboard: mainReplyKeyboard() }],
+        llmTask: {
+          mode: "SINGLE",
+          persona,
+          scenario: null,
+          userText:
+            "Пользователь только что пришёл и выбрал тебя, чтобы просто поболтать. Поздоровайся в своём стиле и предложи тему или задай лёгкий вопрос. Не спрашивай 'о чём хочешь поговорить' — предложи сам.",
+          forceFree: true
+        }
       };
     }
 

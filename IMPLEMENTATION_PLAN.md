@@ -196,4 +196,3 @@
 - smoke: запустить бота, подождать interval → получить напоминание
 
 **Rollback:** удалить scheduler, убрать interval из index.ts, откатить settings handler.
-

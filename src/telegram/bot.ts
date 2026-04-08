@@ -102,7 +102,10 @@ export class BotRuntime {
       // already logged at startup (startup_without_llm), not a per-message error.
       return withGenerationFailure(result);
     }
-    const isBypass = !this.billingConfigured || this.bypassBalanceUserIds.has(event.userId);
+    const isBypass =
+      !this.billingConfigured ||
+      this.bypassBalanceUserIds.has(event.userId) ||
+      result.llmTask.forceFree === true;
     if (!isBypass && this.balanceStore && this.billingConfig) {
       this.balanceStore.ensureBalance(event.userId);
       const cost = resolveMessageCost(result.llmTask.mode);
@@ -141,7 +144,7 @@ export class BotRuntime {
       }
 
       const mergedMessages = mergeMessagesWithGenerated(result.messages, generatedMessages, result.llmTask.mode);
-      if (generation.billable) {
+      if (generation.billable && !result.llmTask.forceFree) {
         const postGenerationEvent = resolvePostGenerationEvent(result.llmTask);
         if (postGenerationEvent) {
           this.analytics?.emitEvent({
@@ -152,7 +155,7 @@ export class BotRuntime {
         }
       }
 
-      if (!isBypass && this.balanceStore && generation.billable && this.billingConfig) {
+      if (!isBypass && this.balanceStore && generation.billable && this.billingConfig && !result.llmTask.forceFree) {
         const cost = resolveMessageCost(result.llmTask.mode);
         try {
           this.balanceStore.deductBalance(event.userId, cost, result.llmTask.mode);
@@ -189,7 +192,7 @@ export class BotRuntime {
         }
       }
 
-      const withShare = generation.billable
+      const withShare = generation.billable && !result.llmTask.forceFree
         ? this.appendShareMessageIfNeeded(result.llmTask, event.userId, mergedMessages)
         : mergedMessages;
 

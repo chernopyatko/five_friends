@@ -52,7 +52,7 @@ describe("stateMachine", () => {
     expect(result.state.pendingUserText).toBe("привет");
   });
 
-  it("sets persistent main menu on /start", () => {
+  it("sets cold start text, inline keyboard and persistent main menu on /start", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -60,10 +60,16 @@ describe("stateMachine", () => {
       command: "/start"
     });
 
+    expect(result.messages[0]?.text).toContain("Что привело тебя сюда?");
     expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Спросить всех");
     expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("👥 Друзья");
     expect(result.messages[0]?.replyKeyboard?.[2]?.[0]).toBe("📋 Итоги");
-    expect(result.messages[0]?.keyboard).toBeUndefined();
+    const csSituation = result.messages[0]?.keyboard?.[0]?.[0];
+    const csMessage = result.messages[0]?.keyboard?.[1]?.[0];
+    const csChat = result.messages[0]?.keyboard?.[2]?.[0];
+    expect(csSituation && "data" in csSituation ? csSituation.data : null).toBe("cs_situation");
+    expect(csMessage && "data" in csMessage ? csMessage.data : null).toBe("cs_message");
+    expect(csChat && "data" in csChat ? csChat.data : null).toBe("cs_chat");
   });
 
   it("treats /friends as alias to /help", () => {
@@ -109,6 +115,133 @@ describe("stateMachine", () => {
 
     expect(result.messages[0]?.text).toContain("Собираю разбор от всех друзей");
     expect(result.state.pendingMode).toBeNull();
+  });
+
+  it("sets panel pending mode via cs_situation callback", () => {
+    const handlers = new UXHandlers();
+    const result = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-situation",
+      callbackData: "cs_situation"
+    });
+
+    expect(result.state.pendingMode).toBe("awaiting_panel_input");
+    expect(result.state.pendingPanelScenario).toBeNull();
+    expect(result.messages[0]?.text).toContain("Расскажи что случилось");
+  });
+
+  it("opens message submenu via cs_message callback", () => {
+    const handlers = new UXHandlers();
+    const result = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-message",
+      callbackData: "cs_message"
+    });
+
+    expect(result.messages[0]?.text).toBe("Что нужно?");
+    const compose = result.messages[0]?.keyboard?.[0]?.[0];
+    const reply = result.messages[0]?.keyboard?.[1]?.[0];
+    expect(compose && "data" in compose ? compose.data : null).toBe("cs_compose");
+    expect(reply && "data" in reply ? reply.data : null).toBe("cs_reply");
+  });
+
+  it("starts compose flow from cs_compose and requests friend when missing", () => {
+    const handlers = new UXHandlers();
+    const noPersona = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-compose-no-persona",
+      callbackData: "cs_compose"
+    });
+
+    expect(noPersona.state.pendingMode).toBe("awaiting_compose_input");
+    expect(noPersona.messages[0]?.text).toContain("Кто поможет сформулировать");
+    const choose = noPersona.messages[0]?.keyboard?.[0]?.[0];
+    expect(choose && "data" in choose ? choose.data : null).toBe("choose_friend:yan");
+  });
+
+  it("starts compose flow from cs_compose when friend already selected", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-compose-persona",
+      callbackData: "choose_friend:yan"
+    });
+
+    const withPersona = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-cs-compose-persona",
+      callbackData: "cs_compose"
+    });
+
+    expect(withPersona.state.pendingMode).toBe("awaiting_compose_input");
+    expect(withPersona.messages[0]?.text).toContain("Напиши, что нужно сформулировать");
+  });
+
+  it("starts reply flow from cs_reply and requests friend when missing", () => {
+    const handlers = new UXHandlers();
+    const noPersona = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-reply-no-persona",
+      callbackData: "cs_reply"
+    });
+
+    expect(noPersona.state.pendingMode).toBe("awaiting_reply_input");
+    expect(noPersona.messages[0]?.text).toContain("Кто поможет с ответом");
+    const choose = noPersona.messages[0]?.keyboard?.[0]?.[0];
+    expect(choose && "data" in choose ? choose.data : null).toBe("choose_friend:yan");
+  });
+
+  it("starts reply flow from cs_reply when friend already selected", () => {
+    const handlers = new UXHandlers();
+    handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-reply-persona",
+      callbackData: "choose_friend:max"
+    });
+
+    const withPersona = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-cs-reply-persona",
+      callbackData: "cs_reply"
+    });
+
+    expect(withPersona.state.pendingMode).toBe("awaiting_reply_input");
+    expect(withPersona.messages[0]?.text).toContain("Вставь входящее сообщение");
+  });
+
+  it("opens chat friend picker via cs_chat callback", () => {
+    const handlers = new UXHandlers();
+    const result = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-chat",
+      callbackData: "cs_chat"
+    });
+
+    expect(result.messages[0]?.text).toBe("С кем хочешь поговорить?");
+    const yan = result.messages[0]?.keyboard?.[0]?.[0];
+    const natasha = result.messages[0]?.keyboard?.[0]?.[1];
+    const anya = result.messages[0]?.keyboard?.[1]?.[0];
+    const max = result.messages[0]?.keyboard?.[1]?.[1];
+    expect(yan && "data" in yan ? yan.data : null).toBe("cs_chat_yan");
+    expect(natasha && "data" in natasha ? natasha.data : null).toBe("cs_chat_natasha");
+    expect(anya && "data" in anya ? anya.data : null).toBe("cs_chat_anya");
+    expect(max && "data" in max ? max.data : null).toBe("cs_chat_max");
+  });
+
+  it("selects persona and starts forceFree chat via cs_chat_yan", () => {
+    const handlers = new UXHandlers();
+    const result = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-cs-chat-yan",
+      callbackData: "cs_chat_yan"
+    });
+
+    expect(result.state.currentPersona).toBe("yan");
+    expect(result.state.pendingMode).toBeNull();
+    expect(result.messages[0]?.text).toContain("Сейчас с тобой Ян");
+    expect(result.llmTask?.mode).toBe("SINGLE");
+    expect(result.llmTask?.persona).toBe("yan");
+    expect(result.llmTask?.forceFree).toBe(true);
   });
 
   it("accepts legacy trigger text for panel mode", () => {

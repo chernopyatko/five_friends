@@ -31,6 +31,47 @@ export function startKeyboard(): InlineKeyboard {
   ];
 }
 
+export function coldStartKeyboard(): InlineKeyboard {
+  return [
+    [{ text: "🤯 Есть ситуация — нужен взгляд со стороны", data: "cs_situation" }],
+    [{ text: "💬 Сложное сообщение — помоги ответить или написать", data: "cs_message" }],
+    [{ text: "🙂 Просто хочу поболтать", data: "cs_chat" }]
+  ];
+}
+
+export function coldStartMessageKeyboard(): InlineKeyboard {
+  return [
+    [{ text: "📝 Написать сообщение кому-то", data: "cs_compose" }],
+    [{ text: "💬 Ответить на чужое сообщение", data: "cs_reply" }]
+  ];
+}
+
+export function coldStartChatKeyboard(): InlineKeyboard {
+  return [
+    [
+      { text: "🧠 Ян — разложит по полочкам", data: "cs_chat_yan" },
+      { text: "❤️ Наташа — поддержит и поймёт", data: "cs_chat_natasha" }
+    ],
+    [
+      { text: "🌀 Аня — задаст точный вопрос", data: "cs_chat_anya" },
+      { text: "🎯 Макс — скажет как есть", data: "cs_chat_max" }
+    ]
+  ];
+}
+
+export function friendPickerKeyboard(): InlineKeyboard {
+  return [
+    [
+      { text: "🧠 Ян", data: "choose_friend:yan" },
+      { text: "❤️ Наташа", data: "choose_friend:natasha" }
+    ],
+    [
+      { text: "🌀 Аня", data: "choose_friend:anya" },
+      { text: "🎯 Макс", data: "choose_friend:max" }
+    ]
+  ];
+}
+
 export function friendsKeyboard(): InlineKeyboard {
   return [
     [
