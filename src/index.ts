@@ -13,6 +13,7 @@ import { AnalyticsService } from "./observability/analytics.js";
 import { createLogger, toSafeLog } from "./observability/logger.js";
 import { MetricsCollector } from "./observability/metrics.js";
 import { OpenAILLMResponder } from "./runtime/llmResponder.js";
+import { processReminders } from "./scheduler/reminderHandler.js";
 import { SqliteStore } from "./state/store.js";
 import { BotRuntime } from "./telegram/bot.js";
 import type { InlineKeyboard, ReplyKeyboard } from "./telegram/keyboard.js";
@@ -38,6 +39,7 @@ const TYPING_INITIAL_DELAY_MS = 300;
 const TYPING_REPEAT_MS = 4_000;
 const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
 const TRIBUTE_WEBHOOK_PATH = "/api/tribute/webhook";
+const REMINDER_TRIGGER_PATH = "/api/reminders/trigger";
 const KNOWN_TRIBUTE_EVENTS = new Set(["new_digital_product", "digital_product_refunded"]);
 
 export async function main(): Promise<void> {
@@ -224,9 +226,10 @@ export async function main(): Promise<void> {
     );
   });
 
-  if (billingConfig.tributeApiSecret) {
+  const shouldStartWebhookServer = Boolean(billingConfig.tributeApiSecret || process.env.REMINDER_SECRET);
+  if (shouldStartWebhookServer) {
     const webhookPort = parsePort(process.env.WEBHOOK_PORT) ?? parsePort(process.env.PORT) ?? 3100;
-    webhookServer = await startTributeWebhookServer({
+    webhookServer = await startWebhookServer({
       port: webhookPort,
       bot,
       billingConfig,
@@ -300,7 +303,7 @@ function parsePort(rawValue: string | undefined): number | null {
   return value;
 }
 
-async function startTributeWebhookServer(input: {
+async function startWebhookServer(input: {
   port: number;
   bot: Bot;
   billingConfig: BillingConfig;
@@ -310,7 +313,16 @@ async function startTributeWebhookServer(input: {
   logger: ReturnType<typeof createLogger>;
 }): Promise<Server> {
   const server = createServer((req, res) => {
-    void handleTributeWebhookRequest(req, res, input);
+    const urlPath = req.url?.split("?")[0];
+    if (urlPath === TRIBUTE_WEBHOOK_PATH) {
+      void handleTributeWebhookRequest(req, res, input);
+      return;
+    }
+    if (urlPath === REMINDER_TRIGGER_PATH && req.method === "POST") {
+      void handleReminderTrigger(req, res, input);
+      return;
+    }
+    writeJson(res, 404, { error: "not found" });
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -324,12 +336,12 @@ async function startTributeWebhookServer(input: {
 
   input.logger.info(
     toSafeLog({
-      outcome: "tribute_webhook_started",
+      outcome: "webhook_server_started",
       details: {
         port: input.port
       }
     }),
-    "Tribute webhook server started"
+    "Webhook server started"
   );
 
   return server;
@@ -347,11 +359,6 @@ async function handleTributeWebhookRequest(
     logger: ReturnType<typeof createLogger>;
   }
 ): Promise<void> {
-  const urlPath = req.url?.split("?")[0];
-  if (urlPath !== TRIBUTE_WEBHOOK_PATH) {
-    writeJson(res, 404, { error: "not found" });
-    return;
-  }
   if (req.method !== "POST") {
     writeJson(res, 405, { error: "method not allowed" });
     return;
@@ -510,6 +517,47 @@ async function handleTributeWebhookRequest(
         }
       }),
       "Unhandled Tribute webhook error"
+    );
+    writeJson(res, 500, { error: "internal error" });
+  }
+}
+
+async function handleReminderTrigger(
+  req: IncomingMessage,
+  res: ServerResponse,
+  input: {
+    bot: Bot;
+    billingConfig: BillingConfig;
+    balanceStore: BalanceStore;
+    analytics: AnalyticsService;
+    store: SqliteStore;
+    logger: ReturnType<typeof createLogger>;
+  }
+): Promise<void> {
+  const authorizationHeader = req.headers.authorization;
+  const authHeader = Array.isArray(authorizationHeader) ? authorizationHeader[0] : authorizationHeader;
+  const expectedToken = process.env.REMINDER_SECRET;
+  if (!expectedToken || authHeader !== `Bearer ${expectedToken}`) {
+    writeJson(res, 401, { error: "unauthorized" });
+    return;
+  }
+
+  try {
+    const result = await processReminders({
+      db: input.store.getDb(),
+      bot: input.bot,
+      logger: input.logger
+    });
+    writeJson(res, 200, { ok: true, ...result });
+  } catch (error) {
+    input.logger.error(
+      toSafeLog({
+        outcome: "reminder_trigger_error",
+        details: {
+          error: error instanceof Error ? error.message : "unknown"
+        }
+      }),
+      "Failed to process reminders"
     );
     writeJson(res, 500, { error: "internal error" });
   }

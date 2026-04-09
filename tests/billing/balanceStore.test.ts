@@ -66,4 +66,18 @@ describe("balance store", () => {
     expect(() => balanceStore.deductBalance("u3", 0, "SINGLE")).toThrowError(/amount/i);
     expect(() => balanceStore.addBalance("u3", -1, "tribute_purchase")).toThrowError(/amount/i);
   });
+
+  it("gets and sets reminders enabled flag", () => {
+    const balanceStore = createBalanceStore();
+    const userId = "reminder-user";
+
+    balanceStore.ensureBalance(userId);
+    expect(balanceStore.getRemindersEnabled(userId)).toBe(true);
+
+    balanceStore.setRemindersEnabled(userId, false);
+    expect(balanceStore.getRemindersEnabled(userId)).toBe(false);
+
+    balanceStore.setRemindersEnabled(userId, true);
+    expect(balanceStore.getRemindersEnabled(userId)).toBe(true);
+  });
 });

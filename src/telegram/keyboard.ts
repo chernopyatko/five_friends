@@ -117,6 +117,16 @@ export function settingsKeyboard(): InlineKeyboard {
   ];
 }
 
+export function settingsKeyboardWithReminders(remindersEnabled: boolean): InlineKeyboard {
+  return [
+    [{ text: "🔒 Приватность", data: "settings_privacy" }],
+    [{ text: "🎭 Демо", data: "settings_demo" }],
+    [{ text: remindersEnabled ? "🔔 Напоминания: вкл" : "🔕 Напоминания: выкл", data: "settings_toggle_reminders" }],
+    [{ text: "🔄 Сбросить сессию", data: "settings_reset" }],
+    [{ text: "🧹 Забыть всё", data: "settings_forget" }]
+  ];
+}
+
 export function demoTryKeyboard(): InlineKeyboard {
   return [[{ text: "🚀 Попробовать тоже", data: "panel_start" }]];
 }

@@ -10,6 +10,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
+    "reminder:trigger": "tsx src/reminderTrigger.ts",
     "test": "vitest run",
     "lint": "eslint ."
   },

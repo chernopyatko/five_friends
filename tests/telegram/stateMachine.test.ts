@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { BalanceStore } from "../../src/billing/balanceStore.js";
 import { ReferralService } from "../../src/growth/referral.js";
 import { AnalyticsService } from "../../src/observability/analytics.js";
 import { SqliteStore } from "../../src/state/store.js";
@@ -37,6 +38,18 @@ function createGrowthEnabledHandlers(): UXHandlers {
     analytics,
     adminUserIds: ["admin-user"]
   });
+}
+
+function createHandlersWithBalance(): { handlers: UXHandlers; balanceStore: BalanceStore } {
+  const dir = mkdtempSync(join(tmpdir(), "five-friends-balance-sm-"));
+  tempDirs.push(dir);
+  const store = new SqliteStore(join(dir, "bot.sqlite"));
+  stores.push(store);
+  const balanceStore = new BalanceStore(store.getDb());
+  return {
+    handlers: new UXHandlers({ balanceStore }),
+    balanceStore
+  };
 }
 
 describe("stateMachine", () => {
@@ -105,6 +118,28 @@ describe("stateMachine", () => {
     handlers.handleEvent({ updateId: 3, userId: "u1", text: "a" });
     const duplicate = handlers.handleEvent({ updateId: 3, userId: "u1", text: "b" });
     expect(duplicate.messages[0]?.text).toContain("устарела");
+  });
+
+  it("toggles reminders via settings callback", () => {
+    const { handlers, balanceStore } = createHandlersWithBalance();
+    const userId = "u-reminder-toggle";
+    balanceStore.ensureBalance(userId);
+
+    const disabled = handlers.handleEvent({
+      updateId: 1,
+      userId,
+      callbackData: "settings_toggle_reminders"
+    });
+    expect(disabled.messages[0]?.text).toContain("отключены");
+    expect(balanceStore.getRemindersEnabled(userId)).toBe(false);
+
+    const enabled = handlers.handleEvent({
+      updateId: 2,
+      userId,
+      callbackData: "settings_toggle_reminders"
+    });
+    expect(enabled.messages[0]?.text).toContain("включены");
+    expect(balanceStore.getRemindersEnabled(userId)).toBe(true);
   });
 
   it("handles panel pending flow", () => {

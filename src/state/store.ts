@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import Database from "better-sqlite3";
 
-import { initSchema, pruneSessionMessages, SESSION_MESSAGE_RETENTION } from "./schema.js";
+import { initSchema, migrateSchema, pruneSessionMessages, SESSION_MESSAGE_RETENTION } from "./schema.js";
 
 export type MessageRole = "user" | "assistant";
 export type MemoryKind = "fact" | "preference" | "thread" | "episode";
@@ -96,6 +96,7 @@ export class SqliteStore {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     initSchema(this.db);
+    migrateSchema(this.db);
   }
 
   getDb(): Database {

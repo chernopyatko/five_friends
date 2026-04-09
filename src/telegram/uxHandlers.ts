@@ -14,6 +14,7 @@ import {
   safetyHoldKeyboard,
   safetyKeyboard,
   settingsKeyboard,
+  settingsKeyboardWithReminders,
   startKeyboard,
   type InlineKeyboard,
   type ReplyKeyboard
@@ -29,19 +30,6 @@ import type { BotMode, ToolScenario } from "../llm/schemas.js";
 
 const RATE_LIMIT_WINDOW_MS = 2000;
 const RATE_LIMIT_MAX_MESSAGES = 5;
-const START_TEXT =
-  "Привет! Здесь живут 4 друга — они помогут разобраться в сложной ситуации и подобрать правильные слова.\n\n" +
-  "🧰 ЧТО МЫ УМЕЕМ\n" +
-  "🚀 Спросить всех — задай вопрос и получи 4 разных взгляда на ситуацию.\n" +
-  "📝 Напиши за меня — опиши ситуацию, и мы сформулируем сообщение кому угодно.\n" +
-  "💬 Помоги ответить — перешли нам сложное сообщение, а мы подскажем, что на него ответить.\n" +
-  "А еще можно выбрать кого-то одного и просто поболтать.\n\n" +
-  "👥 КТО ОТВЕЧАЕТ\n" +
-  "🧠 Ян — разложит по полочкам и даст план\n" +
-  "❤️ Наташа — поддержит и назовёт чувства\n" +
-  "🌀 Аня — задаст точный вопрос про главное\n" +
-  "🎯 Макс — пошутит, вернёт на землю и отделит факты от эмоций\n\n" +
-  "Выбирай нужный инструмент в меню ниже или просто пиши свой вопрос прямо сюда!";
 const COLD_START_TEXT =
   "Привет! Здесь живут 4 друга — каждый помогает по-своему.\n\n" +
   "Что привело тебя сюда?";
@@ -278,7 +266,7 @@ export class UXHandlers {
         };
       case "/settings":
         return {
-          messages: [{ text: SETTINGS_TEXT, keyboard: settingsKeyboard(), replyKeyboard: mainReplyKeyboard() }]
+          messages: [{ text: SETTINGS_TEXT, keyboard: this.getSettingsKeyboard(userId), replyKeyboard: mainReplyKeyboard() }]
         };
       case "/demo":
         return {
@@ -592,6 +580,24 @@ export class UXHandlers {
       return { messages: [{ text: DEMO_TEXT, keyboard: demoTryKeyboard() }] };
     }
 
+    if (callbackData === "settings_toggle_reminders") {
+      if (!this.balanceStore) {
+        return { messages: [{ text: "Настройка недоступна.", replyKeyboard: mainReplyKeyboard() }] };
+      }
+
+      const current = this.balanceStore.getRemindersEnabled(userId);
+      const next = !current;
+      this.balanceStore.setRemindersEnabled(userId, next);
+
+      return {
+        messages: [{
+          text: next ? "🔔 Напоминания включены." : "🔕 Напоминания отключены.",
+          keyboard: settingsKeyboardWithReminders(next),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
     if (callbackData === "settings_reset") {
       this.clearDangerConfirmations(state);
       state.pendingResetConfirmation = true;
@@ -773,7 +779,7 @@ export class UXHandlers {
     }
 
     if (quickAction === "настройки") {
-      return { messages: [{ text: SETTINGS_TEXT, keyboard: settingsKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
+      return { messages: [{ text: SETTINGS_TEXT, keyboard: this.getSettingsKeyboard(userId), replyKeyboard: mainReplyKeyboard() }] };
     }
 
     if (quickAction === "демо") {
@@ -1086,6 +1092,13 @@ export class UXHandlers {
     });
     reset.currentPersona = keptPersona;
     Object.assign(state, reset);
+  }
+
+  private getSettingsKeyboard(userId: string): InlineKeyboard {
+    if (!this.balanceStore) {
+      return settingsKeyboard();
+    }
+    return settingsKeyboardWithReminders(this.balanceStore.getRemindersEnabled(userId));
   }
 }
 

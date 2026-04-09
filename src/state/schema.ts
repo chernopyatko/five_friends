@@ -93,6 +93,22 @@ export function initSchema(db: Database): void {
   `);
 }
 
+export function migrateSchema(db: Database): void {
+  runIdempotentAlter(db, "ALTER TABLE user_balance ADD COLUMN last_reminder_sent_at INTEGER");
+  runIdempotentAlter(db, "ALTER TABLE user_balance ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 1");
+}
+
+function runIdempotentAlter(db: Database, sql: string): void {
+  try {
+    db.exec(sql);
+  } catch (error) {
+    const sqliteError = error as { message?: string };
+    if (!sqliteError.message?.toLowerCase().includes("duplicate column name")) {
+      throw error;
+    }
+  }
+}
+
 export function pruneSessionMessages(
   db: Database,
   sessionId: string,

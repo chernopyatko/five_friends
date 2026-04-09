@@ -146,6 +146,31 @@ export class BalanceStore {
       totalSpent: Number(row.total_spent)
     };
   }
+
+  getRemindersEnabled(userId: string): boolean {
+    this.ensureBalance(userId);
+    const row = this.db
+      .prepare<[string], { reminders_enabled: number }>(`
+        SELECT reminders_enabled
+        FROM user_balance
+        WHERE user_id = ?
+      `)
+      .get(userId);
+
+    return row?.reminders_enabled !== 0;
+  }
+
+  setRemindersEnabled(userId: string, enabled: boolean): void {
+    this.ensureBalance(userId);
+    this.db
+      .prepare<[number, number, string]>(`
+        UPDATE user_balance
+        SET reminders_enabled = ?,
+            updated_at = ?
+        WHERE user_id = ?
+      `)
+      .run(enabled ? 1 : 0, Date.now(), userId);
+  }
 }
 
 function assertPositiveInteger(value: number, field: string): void {
