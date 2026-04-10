@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -537,7 +538,13 @@ async function handleReminderTrigger(
   const authorizationHeader = req.headers.authorization;
   const authHeader = Array.isArray(authorizationHeader) ? authorizationHeader[0] : authorizationHeader;
   const expectedToken = process.env.REMINDER_SECRET;
-  if (!expectedToken || authHeader !== `Bearer ${expectedToken}`) {
+  if (!expectedToken || !safeCompareHeader(authHeader, `Bearer ${expectedToken}`)) {
+    input.logger.warn(
+      toSafeLog({
+        outcome: "reminder_trigger_unauthorized"
+      }),
+      "Unauthorized reminder trigger attempt"
+    );
     writeJson(res, 401, { error: "unauthorized" });
     return;
   }
@@ -793,6 +800,18 @@ function toStartupErrorDetails(error: unknown): Record<string, string> {
     errorName: "unknown",
     errorMessage: "unknown"
   };
+}
+
+function safeCompareHeader(received: string | undefined, expected: string): boolean {
+  if (!received) {
+    return false;
+  }
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(a, b);
 }
 
 function sleep(ms: number): Promise<void> {
