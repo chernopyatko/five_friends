@@ -71,47 +71,42 @@ describe("analytics service", () => {
     expect(payload?.has_ref_code).toBe(true);
   });
 
-  it("logs WARN on HTTP non-OK response", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "five-friends-analytics-http-"));
+  it("captures event to PostHog when configured", () => {
+    const dir = mkdtempSync(join(tmpdir(), "five-friends-analytics-ph-"));
     tempDirs.push(dir);
     const store = new SqliteStore(join(dir, "bot.sqlite"));
     stores.push(store);
-    const warnings: unknown[] = [];
     const logger = {
       info() {},
-      warn(payload: unknown) {
-        warnings.push(payload);
-      }
+      warn() {}
     } as never;
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(null, { status: 500 })
-    );
 
     const analytics = new AnalyticsService({
       db: store.getDb(),
       logger,
-      httpEndpoint: "http://mock-endpoint.test"
+      posthogApiKey: "phc_test_key",
+      posthogHost: "https://eu.i.posthog.com"
     });
+
+    const captureSpy = vi.spyOn(
+      (analytics as unknown as { posthog: { capture: (...args: unknown[]) => void } }).posthog,
+      "capture"
+    );
 
     analytics.emitEvent({
       event: "start",
-      userId: "u-http",
-      sessionId: "s-http"
+      userId: "u-ph",
+      sessionId: "s-ph",
+      extra: { has_ref_code: true }
     });
 
-    await vi.waitFor(() => {
-      const found = warnings.find(
-        (w) => (w as { outcome?: string }).outcome === "analytics_http_error"
-      );
-      expect(found).toBeDefined();
-    });
-    fetchSpy.mockRestore();
-
-    const warnEntry = warnings.find(
-      (w) => (w as { outcome?: string }).outcome === "analytics_http_error"
-    ) as { outcome: string; details: { status: number } } | undefined;
-    expect(warnEntry?.details.status).toBe(500);
+    expect(captureSpy).toHaveBeenCalledOnce();
+    const call = captureSpy.mock.calls[0]![0] as { distinctId: string; event: string; properties: Record<string, unknown> };
+    expect(call.event).toBe("start");
+    expect(call.distinctId).toBeTypeOf("string");
+    expect(call.distinctId).not.toBe("u-ph");
+    expect(call.properties.has_ref_code).toBe(true);
+    expect(call.properties.session_id).toBe("s-ph");
   });
 
   it("builds stats snapshot from UTC daily aggregates", () => {

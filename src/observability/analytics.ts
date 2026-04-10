@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { Logger as PinoLogger } from "pino";
+import { PostHog } from "posthog-node";
 
 import { createLogger } from "./logger.js";
 import { hashUserId } from "../utils/hashUserId.js";
@@ -58,21 +59,31 @@ interface AnalyticsPayload {
 }
 
 const RESERVED_PAYLOAD_KEYS = new Set(["event", "ts", "session_id", "user_id_hash", "inviter_present"]);
-const HTTP_TIMEOUT_MS = 1500;
 
 export class AnalyticsService {
   private readonly db: Database;
   private readonly logger: PinoLogger;
-  private readonly httpEndpoint?: string;
+  private readonly posthog?: PostHog;
 
   constructor(input: {
     db: Database;
     logger?: PinoLogger;
-    httpEndpoint?: string;
+    posthogApiKey?: string;
+    posthogHost?: string;
   }) {
     this.db = input.db;
     this.logger = input.logger ?? createLogger();
-    this.httpEndpoint = input.httpEndpoint;
+    if (input.posthogApiKey) {
+      this.posthog = new PostHog(input.posthogApiKey, {
+        host: input.posthogHost ?? "https://eu.i.posthog.com"
+      });
+      this.posthog.on("error", (err) => {
+        this.logger.warn(
+          { outcome: "posthog_error", details: { error: err instanceof Error ? err.message : "unknown" } },
+          "PostHog SDK error"
+        );
+      });
+    }
   }
 
   emitEvent(input: EmitEventInput): void {
@@ -95,8 +106,23 @@ export class AnalyticsService {
     this.logger.info({ analytics_event: payload }, "analytics_event");
     this.incEventDaily(input.event, ts);
 
-    if (this.httpEndpoint) {
-      void this.sendHttp(payload);
+    if (this.posthog) {
+      const properties: Record<string, string | number | boolean | null | undefined> = {
+        session_id: payload.session_id,
+        inviter_present: payload.inviter_present
+      };
+      if (input.extra) {
+        for (const [key, value] of Object.entries(input.extra)) {
+          if (!RESERVED_PAYLOAD_KEYS.has(key)) {
+            properties[key] = value;
+          }
+        }
+      }
+      this.posthog.capture({
+        distinctId: payload.user_id_hash,
+        event: input.event,
+        properties
+      });
     }
   }
 
@@ -162,45 +188,9 @@ export class AnalyticsService {
     return Number(row?.total ?? 0);
   }
 
-  private async sendHttp(payload: AnalyticsPayload): Promise<void> {
-    if (!this.httpEndpoint) {
-      return;
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(this.httpEndpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-      if (!response.ok) {
-        this.logger.warn(
-          {
-            outcome: "analytics_http_error",
-            details: {
-              status: response.status
-            }
-          },
-          "Analytics HTTP forward returned non-OK status"
-        );
-      }
-    } catch (error) {
-      this.logger.warn(
-        {
-          outcome: "analytics_http_failed",
-          details: {
-            error: error instanceof Error ? error.message : "unknown"
-          }
-        },
-        "Analytics HTTP forward failed"
-      );
-    } finally {
-      clearTimeout(timer);
+  async shutdown(): Promise<void> {
+    if (this.posthog) {
+      await this.posthog.shutdown();
     }
   }
 }

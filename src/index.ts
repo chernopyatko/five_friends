@@ -51,7 +51,8 @@ export async function main(): Promise<void> {
   const analytics = new AnalyticsService({
     db: store.getDb(),
     logger,
-    httpEndpoint: process.env.ANALYTICS_HTTP_ENDPOINT
+    posthogApiKey: process.env.POSTHOG_API_KEY,
+    posthogHost: process.env.POSTHOG_HOST
   });
   const balanceStore = new BalanceStore(store.getDb());
   const billingConfig = loadBillingConfig();
@@ -159,6 +160,7 @@ export async function main(): Promise<void> {
     if (webhookServer) {
       webhookServer.close();
     }
+    void analytics.shutdown();
     store.close();
   };
 

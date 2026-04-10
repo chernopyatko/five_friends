@@ -18,7 +18,8 @@
     "better-sqlite3": "9.5.0",
     "grammy": "1.23.1",
     "openai": "4.76.0",
-    "pino": "9.0.0"
+    "pino": "9.0.0",
+    "posthog-node": "^5.21.2"
   },
   "devDependencies": {
     "@eslint/js": "8.57.0",
