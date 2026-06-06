@@ -127,10 +127,17 @@ describe("bot runtime hooks", () => {
       text: "все сразу"
     });
 
-    const result = await runtime.processEvent({
+    const collected = await runtime.processEvent({
       updateId: 2,
       userId: "u3",
       text: "моя ситуация"
+    });
+    expect(collected.messages[0]?.text).toContain("Принял 1");
+
+    const result = await runtime.processEvent({
+      updateId: 3,
+      userId: "u3",
+      callbackData: "conversation_done"
     });
 
     expect(result.messages[0]?.text).toContain("Что-то пошло не так");
@@ -153,10 +160,17 @@ describe("bot runtime hooks", () => {
       text: "все сразу"
     });
 
-    const result = await runtime.processEvent({
+    const collected = await runtime.processEvent({
       updateId: 2,
       userId: "u4",
       text: "моя ситуация"
+    });
+    expect(collected.messages[0]?.text).toContain("Принял 1");
+
+    const result = await runtime.processEvent({
+      updateId: 3,
+      userId: "u4",
+      callbackData: "conversation_done"
     });
 
     expect(result.messages).toHaveLength(1);
@@ -223,10 +237,17 @@ describe("bot runtime hooks", () => {
       text: "Напиши за меня"
     });
 
-    const result = await runtime.processEvent({
+    const collected = await runtime.processEvent({
       updateId: 3,
       userId: "u-share",
       text: "Нужно написать коллеге про перенос встречи."
+    });
+    expect(collected.messages[0]?.text).toContain("Принял 1");
+
+    const result = await runtime.processEvent({
+      updateId: 4,
+      userId: "u-share",
+      callbackData: "conversation_done"
     });
 
     expect(result.messages).toHaveLength(2);
@@ -260,6 +281,7 @@ describe("bot runtime hooks", () => {
       {
         analytics: deps.analytics,
         balanceStore,
+        firstPanelStateStore: deps.store,
         bypassBalanceUserIds: new Set(),
         billingConfig: configuredBillingConfig()
       }
@@ -288,6 +310,140 @@ describe("bot runtime hooks", () => {
       .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
       .get("paywall_shown");
     expect(Number(row?.total ?? 0)).toBe(1);
+
+    const beforeFirstPanel = deps.store
+      .getDb()
+      .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
+      .get("paywall_before_first_panel");
+    expect(Number(beforeFirstPanel?.total ?? 0)).toBe(1);
+  });
+
+  it("does not emit before-first-panel paywall analytics when no first panel store is configured", async () => {
+    const deps = createGrowthDeps();
+    const balanceStore = new BalanceStore(deps.store.getDb());
+    const userId = "u-paywall-no-panel-store";
+    balanceStore.ensureBalance(userId, 0);
+
+    const runtime = new BotRuntime(
+      new UXHandlers({
+        analytics: deps.analytics
+      }),
+      {
+        async generate() {
+          return { messages: [{ text: "should not happen" }], billable: true };
+        }
+      },
+      {
+        analytics: deps.analytics,
+        balanceStore,
+        bypassBalanceUserIds: new Set(),
+        billingConfig: configuredBillingConfig()
+      }
+    );
+
+    await runtime.processEvent({
+      updateId: 1,
+      userId,
+      callbackData: "choose_friend:yan"
+    });
+
+    await runtime.processEvent({
+      updateId: 2,
+      userId,
+      text: "помоги с текстом"
+    });
+
+    const beforeFirstPanel = deps.store
+      .getDb()
+      .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
+      .get("paywall_before_first_panel");
+    expect(Number(beforeFirstPanel?.total ?? 0)).toBe(0);
+  });
+
+  it("returns crisis responder instead of paywall for hard safety message at zero balance", async () => {
+    const deps = createGrowthDeps();
+    const balanceStore = new BalanceStore(deps.store.getDb());
+    const userId = "u-paywall-hard-safety";
+    balanceStore.ensureBalance(userId, 0);
+    let generateCalls = 0;
+
+    const runtime = new BotRuntime(
+      new UXHandlers({
+        analytics: deps.analytics
+      }),
+      {
+        async generate() {
+          generateCalls += 1;
+          return { messages: [{ text: "should not happen" }], billable: true };
+        }
+      },
+      {
+        analytics: deps.analytics,
+        balanceStore,
+        firstPanelStateStore: deps.store,
+        bypassBalanceUserIds: new Set(),
+        billingConfig: configuredBillingConfig()
+      }
+    );
+
+    await runtime.processEvent({
+      updateId: 1,
+      userId,
+      callbackData: "choose_friend:yan"
+    });
+
+    const result = await runtime.processEvent({
+      updateId: 2,
+      userId,
+      text: "Я хочу умереть."
+    });
+
+    expect(generateCalls).toBe(0);
+    expect(result.messages[0]?.text).toContain("Мне очень жаль");
+    expect(result.messages[0]?.text).not.toContain("Друзья на паузе");
+  });
+
+  it("returns soft safety check instead of paywall for soft safety message at zero balance", async () => {
+    const deps = createGrowthDeps();
+    const balanceStore = new BalanceStore(deps.store.getDb());
+    const userId = "u-paywall-soft-safety";
+    balanceStore.ensureBalance(userId, 0);
+    let generateCalls = 0;
+
+    const runtime = new BotRuntime(
+      new UXHandlers({
+        analytics: deps.analytics
+      }),
+      {
+        async generate() {
+          generateCalls += 1;
+          return { messages: [{ text: "should not happen" }], billable: true };
+        }
+      },
+      {
+        analytics: deps.analytics,
+        balanceStore,
+        firstPanelStateStore: deps.store,
+        bypassBalanceUserIds: new Set(),
+        billingConfig: configuredBillingConfig()
+      }
+    );
+
+    await runtime.processEvent({
+      updateId: 1,
+      userId,
+      callbackData: "choose_friend:yan"
+    });
+
+    const result = await runtime.processEvent({
+      updateId: 2,
+      userId,
+      text: "Я не хочу жить."
+    });
+
+    expect(generateCalls).toBe(0);
+    expect(result.messages[0]?.text).toContain("Это про реальную опасность");
+    expect(result.messages[0]?.text).not.toContain("Друзья на паузе");
   });
 
   it("adds grace message when deduction brings balance to zero", async () => {
@@ -454,6 +610,61 @@ describe("bot runtime hooks", () => {
       .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
       .get("tool_write_for_me");
     expect(Number(toolWrite?.total ?? 0)).toBe(0);
+  });
+
+  it("emits ask_all event for forceFree panel and marks first panel as seen", async () => {
+    const deps = createGrowthDeps();
+    const userId = "u-forcefree-panel";
+
+    const state = createInitialSessionState({
+      sessionId: "forcefree-panel-session",
+      now: 1_000
+    });
+
+    const handlers = {
+      handleEvent: vi.fn(() => ({
+        messages: [{ text: "preface" }],
+        state,
+        llmTask: {
+          mode: "PANEL",
+          userText: "Разберите ситуацию",
+          forceFree: true
+        },
+        analyticsContext: {
+          askAllOrigin: "auto_cs_situation"
+        }
+      }))
+    } as unknown as UXHandlers;
+
+    const runtime = new BotRuntime(
+      handlers,
+      {
+        async generate() {
+          return {
+            messages: [{ text: "🧠 Ян — Разум\n...\n❤️ Наташа — Сердце\n...\n🌀 Аня — Смысл\n...\n🎯 Макс — Реальность\n..." }],
+            billable: true
+          };
+        }
+      },
+      {
+        analytics: deps.analytics,
+        firstPanelStateStore: deps.store
+      }
+    );
+
+    const result = await runtime.processEvent({
+      updateId: 1,
+      userId,
+      text: "любой вход"
+    });
+
+    expect(result.messages).toHaveLength(1);
+    const askAll = deps.store
+      .getDb()
+      .prepare<[string], { total: number }>("SELECT COALESCE(SUM(count), 0) AS total FROM event_daily WHERE event = ?")
+      .get("ask_all");
+    expect(Number(askAll?.total ?? 0)).toBe(1);
+    expect(deps.store.hasSeenFirstPanel(userId)).toBe(true);
   });
 
   it("returns generated response even if balance deduction fails", async () => {

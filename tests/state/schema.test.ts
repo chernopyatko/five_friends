@@ -40,6 +40,7 @@ describe("state schema", () => {
     expect(tableNames.has("messages")).toBe(true);
     expect(tableNames.has("memories")).toBe(true);
     expect(tableNames.has("users")).toBe(true);
+    expect(tableNames.has("user_state")).toBe(true);
     expect(tableNames.has("event_daily")).toBe(true);
     expect(tableNames.has("user_balance")).toBe(true);
     expect(tableNames.has("balance_transactions")).toBe(true);
@@ -113,5 +114,23 @@ describe("state schema", () => {
     expect(memories[0]?.text).toBe("new");
     expect(memories[0]?.kind).toBe("preference");
     store.close();
+  });
+
+  it("stores first panel seen flag idempotently and persists across restarts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "five-friends-first-panel-"));
+    tempDirs.push(dir);
+    const dbPath = join(dir, "test.sqlite");
+    const first = new SqliteStore(dbPath);
+
+    expect(first.hasSeenFirstPanel("u-panel")).toBe(false);
+    expect(first.markFirstPanelSeen("u-panel", 1_000)).toBe(true);
+    expect(first.hasSeenFirstPanel("u-panel")).toBe(true);
+    expect(first.markFirstPanelSeen("u-panel", 2_000)).toBe(false);
+
+    first.close();
+
+    const second = new SqliteStore(dbPath);
+    expect(second.hasSeenFirstPanel("u-panel")).toBe(true);
+    second.close();
   });
 });

@@ -1,3 +1,5 @@
+import { MODEL_ROUTES } from "../llm/modelRouting.js";
+
 export interface SessionTurn {
   role: "user" | "assistant";
   text: string;
@@ -20,7 +22,7 @@ export function buildRollingSummaryRequest(input: RollingSummaryInput): Record<s
     .join("\n");
 
   return {
-    model: "gpt-5-mini",
+    model: MODEL_ROUTES.memory,
     reasoning: { effort: "high" },
     instructions:
       "Обнови краткую сводку текущей сессии. Только факты и намерения пользователя. 4-8 коротких строк.",

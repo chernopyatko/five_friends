@@ -88,6 +88,10 @@ interface MemoryRow {
   last_used_at: number | null;
 }
 
+interface UserStateRow {
+  first_panel_seen_at: number | null;
+}
+
 export class SqliteStore {
   private readonly db: Database;
 
@@ -105,6 +109,63 @@ export class SqliteStore {
 
   close(): void {
     this.db.close();
+  }
+
+  hasSeenFirstPanel(userId: string): boolean {
+    const row = this.db
+      .prepare<[string], UserStateRow>(`
+        SELECT first_panel_seen_at
+        FROM user_state
+        WHERE user_id = ?
+      `)
+      .get(userId);
+
+    return row?.first_panel_seen_at != null;
+  }
+
+  markFirstPanelSeen(userId: string, at: number = Date.now()): boolean {
+    const run = this.db.transaction(() => {
+      const existing = this.db
+        .prepare<[string], UserStateRow>(`
+          SELECT first_panel_seen_at
+          FROM user_state
+          WHERE user_id = ?
+        `)
+        .get(userId);
+
+      if (existing?.first_panel_seen_at != null) {
+        this.db
+          .prepare<[number, string]>(`
+            UPDATE user_state
+            SET updated_at = ?
+            WHERE user_id = ?
+          `)
+          .run(at, userId);
+        return false;
+      }
+
+      if (!existing) {
+        this.db
+          .prepare<[string, number, number]>(`
+            INSERT INTO user_state (user_id, first_panel_seen_at, updated_at)
+            VALUES (?, ?, ?)
+          `)
+          .run(userId, at, at);
+        return true;
+      }
+
+      this.db
+        .prepare<[number, number, string]>(`
+          UPDATE user_state
+          SET first_panel_seen_at = ?,
+              updated_at = ?
+          WHERE user_id = ?
+        `)
+        .run(at, at, userId);
+      return true;
+    });
+
+    return run();
   }
 
   createSession(userId: string, now: number = Date.now()): SessionRecord {

@@ -1,3 +1,5 @@
+import { MODEL_ROUTES } from "../llm/modelRouting.js";
+
 const ALLOWED_KINDS = ["fact", "preference", "thread", "episode"] as const;
 const ROLE_TOKEN_PATTERN = /\b(system|developer|tool|assistant|user)\s*:|<\s*(system|developer|tool|assistant|user)\s*>/gi;
 const URL_PATTERN = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
@@ -35,7 +37,7 @@ export function buildLongTermExtractionRequest(input: LongTermExtractInput): Rec
     .join("\n");
 
   return {
-    model: "gpt-5-mini",
+    model: MODEL_ROUTES.memory,
     reasoning: { effort: "high" },
     instructions:
       "Выдели только устойчивые long-term заметки пользователя. " +

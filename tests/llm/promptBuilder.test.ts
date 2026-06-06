@@ -7,9 +7,13 @@ import { buildPromptInstructions, getSystemPrompt } from "../../src/llm/promptBu
 
 const PROMPTS_DIR = join(process.cwd(), "prompts");
 
+function readPrompt(name: string): string {
+  return readFileSync(join(PROMPTS_DIR, name), "utf8").trim();
+}
+
 describe("promptBuilder", () => {
   it("loads LLM_SYSTEM_PROMPT_RU_LONG.md 1:1", () => {
-    const fileContent = readFileSync(join(PROMPTS_DIR, "LLM_SYSTEM_PROMPT_RU_LONG.md"), "utf8").trim();
+    const fileContent = readPrompt("LLM_SYSTEM_PROMPT_RU_LONG.md");
     expect(getSystemPrompt()).toBe(fileContent);
   });
 
@@ -22,8 +26,8 @@ describe("promptBuilder", () => {
     });
 
     const systemPrompt = getSystemPrompt();
-    const globalPrompt = readFileSync(join(PROMPTS_DIR, "global_instructions.txt"), "utf8").trim();
-    const personaPrompt = readFileSync(join(PROMPTS_DIR, "persona_anya.txt"), "utf8").trim();
+    const globalPrompt = readPrompt("global_instructions.txt");
+    const personaPrompt = readPrompt("persona_anya.txt");
 
     expect(instructions.startsWith(systemPrompt)).toBe(true);
     expect(instructions.includes(globalPrompt)).toBe(true);
@@ -40,8 +44,8 @@ describe("promptBuilder", () => {
       userMessage: "все сразу"
     });
 
-    const panelPrompt = readFileSync(join(PROMPTS_DIR, "mode_panel.txt"), "utf8").trim();
-    const personaPrompt = readFileSync(join(PROMPTS_DIR, "persona_anya.txt"), "utf8").trim();
+    const panelPrompt = readPrompt("mode_panel.txt");
+    const personaPrompt = readPrompt("persona_anya.txt");
 
     expect(instructions.includes(panelPrompt)).toBe(true);
     expect(instructions.includes(personaPrompt)).toBe(false);
@@ -54,10 +58,56 @@ describe("promptBuilder", () => {
       userMessage: "Разберите это входящее"
     });
 
-    const panelPrompt = readFileSync(join(PROMPTS_DIR, "mode_panel.txt"), "utf8").trim();
-    const toolPrompt = readFileSync(join(PROMPTS_DIR, "scenario_reply.txt"), "utf8").trim();
+    const panelPrompt = readPrompt("mode_panel.txt");
+    const toolPrompt = readPrompt("scenario_reply.txt");
 
     expect(instructions.includes(panelPrompt)).toBe(true);
     expect(instructions.includes(toolPrompt)).toBe(true);
+  });
+
+  it("keeps therapeutic method anchors in every active persona prompt", () => {
+    expect(readPrompt("persona_yan.txt")).toEqual(expect.stringContaining("process-based CBT"));
+    expect(readPrompt("persona_yan.txt")).toEqual(expect.stringContaining("Metacognitive Therapy"));
+    expect(readPrompt("persona_natasha.txt")).toEqual(expect.stringContaining("Emotion-Focused Therapy"));
+    expect(readPrompt("persona_natasha.txt")).toEqual(expect.stringContaining("реляционный гештальт"));
+    expect(readPrompt("persona_anya.txt")).toEqual(expect.stringContaining("meaning-centered / existential therapy"));
+    expect(readPrompt("persona_anya.txt")).toEqual(expect.stringContaining("ACT-подход к ценностям"));
+    expect(readPrompt("persona_max.txt")).toEqual(expect.stringContaining("REBT"));
+    expect(readPrompt("persona_max.txt")).toEqual(expect.stringContaining("CBT-коучинг"));
+  });
+
+  it("prevents Max from using fixed opener examples as persona shortcuts", () => {
+    const maxPrompt = readPrompt("persona_max.txt");
+
+    expect(maxPrompt).toEqual(expect.stringContaining("Не используй постоянные входные фразы"));
+    expect(maxPrompt).not.toContain("Можешь начать с");
+    expect(maxPrompt).not.toContain("Секунду.");
+    expect(maxPrompt).not.toContain("Слушай,");
+    expect(maxPrompt).not.toContain("Ну вот смотри,");
+  });
+
+  it("keeps PANEL anti-repetition constraints for gpt-5.5 ask-all", () => {
+    const panelPrompt = readPrompt("mode_panel.txt");
+
+    expect(panelPrompt).toEqual(expect.stringContaining("Макс не использует постоянные входные фразы"));
+    expect(panelPrompt).toEqual(expect.stringContaining("не четыре пересказа одной мысли"));
+    expect(panelPrompt).toEqual(expect.stringContaining("пересланные тексты, голосовые расшифровки и скриншоты"));
+  });
+
+  it("documents collected forwarded inputs in the gpt-5.5 ask-all test prompt", () => {
+    const testPrompt = readPrompt("ask_all_gpt55_test_prompt.md");
+
+    expect(testPrompt).toEqual(expect.stringContaining("forwarded text"));
+    expect(testPrompt).toEqual(expect.stringContaining("voice transcript"));
+    expect(testPrompt).toEqual(expect.stringContaining("screenshot recognition"));
+    expect(testPrompt).toEqual(expect.stringContaining("Max must not use a fixed opener"));
+  });
+
+  it("treats live phrase examples as tone calibration rather than reusable copy", () => {
+    const globalPrompt = readPrompt("global_instructions.txt");
+
+    expect(globalPrompt).toEqual(expect.stringContaining("Примеры живых фраз — калибровка тона"));
+    expect(globalPrompt).toEqual(expect.stringContaining("Не копируй их дословно"));
+    expect(globalPrompt).toEqual(expect.stringContaining("придумывай свои формулировки"));
   });
 });

@@ -5,7 +5,7 @@ import {
   coldStartChatKeyboard,
   coldStartKeyboard,
   coldStartMessageKeyboard,
-  friendPickerKeyboard,
+  conversationInputKeyboard,
   demoTryKeyboard,
   forgetConfirmKeyboard,
   friendsKeyboard,
@@ -21,27 +21,37 @@ import {
 } from "./keyboard.js";
 import { CRISIS_RESUME_TEXT, getCrisisResponder, getHelpDiscovery, getSafetyCheck, type HelpCountryCode } from "../security/safety.js";
 import { buildShareLink, formatShareLinkMessage } from "../growth/share.js";
+import { parseStartPayload } from "../growth/sourceAttribution.js";
 import type { ReferralService } from "../growth/referral.js";
 import type { BalanceStore } from "../billing/balanceStore.js";
 import type { BillingConfig } from "../billing/config.js";
-import { createInitialSessionState, type Persona, type UserSessionState } from "../state/session.js";
+import { createInitialSessionState, type ConversationPartSource, type PanelScenario, type Persona, type UserSessionState } from "../state/session.js";
 import type { AnalyticsService } from "../observability/analytics.js";
 import type { BotMode, ToolScenario } from "../llm/schemas.js";
 
 const RATE_LIMIT_WINDOW_MS = 2000;
 const RATE_LIMIT_MAX_MESSAGES = 5;
+const MAX_CONVERSATION_PARTS = 20;
+const MAX_CONVERSATION_CHARS = 24_000;
 const COLD_START_TEXT =
-  "Привет! Здесь живут 4 друга — каждый помогает по-своему.\n\n" +
-  "Что привело тебя сюда?";
+  "Привет 👋 Мы на связи.\n\n" +
+  "🧠 Ян: Рассказывай — разберёмся.\n" +
+  "❤️ Наташа: Без осуждения, обещаю.\n" +
+  "🌀 Аня: Что сейчас самое важное?\n" +
+  "🎯 Макс: Короче, выкладывай.\n\n" +
+  "Скинь ситуацию, переписку, войс до 10 минут или скрин. Если фрагментов несколько — кидай по очереди и нажми «Готово».";
 const HELP_TEXT =
   "❓ Как тут всё устроено\n" +
   "Здесь живут 4 ИИ-друга. Ты выбираешь друга и пишешь как обычно.\n\n" +
+  "📥 Что можно прислать\n" +
+  "Текст, пересланные сообщения, войсы до 10 минут и скрины переписки.\n" +
+  "Если фрагментов несколько — отправь их подряд, потом нажми «Готово». Бот ответит один раз по всей переписке.\n\n" +
   "🧰 Инструменты\n" +
   "📝 Напиши за меня — опиши ситуацию, и мы сформулируем сообщение кому угодно.\n" +
   "💬 Помоги ответить — перешли сложное сообщение, подскажем что ответить.\n" +
   "📋 Итоги — соберёт сводку вашего разговора.\n\n" +
   "🚀 Спросить всех\n" +
-  "Нажми 🚀 Спросить всех → следующее сообщение разберут все четверо.\n" +
+  "Нажми 🚀 Спросить всех → скинь переписку → нажми «Готово». Разберут все четверо.\n" +
   "💡 Один друг = 1 сообщение, «Спросить всех» = 3 сообщения.\n\n" +
   "👥 Кто отвечает\n" +
   "🧠 Ян — разложит по полочкам и даст план\n" +
@@ -77,6 +87,8 @@ export interface IncomingEvent {
   updateId: number;
   userId: string;
   text?: string;
+  inputSource?: ConversationPartSource;
+  isForwarded?: boolean;
   command?: "/start" | "/help" | "/friends" | "/reset" | "/privacy" | "/forget" | "/settings" | "/demo" | "/stats" | "/balance";
   commandPayload?: string;
   callbackData?: string;
@@ -93,6 +105,9 @@ export interface HandleResult {
   messages: OutgoingMessage[];
   state: UserSessionState;
   llmTask?: LLMTask;
+  analyticsContext?: {
+    askAllOrigin?: AskAllOrigin;
+  };
   clearLongTerm?: boolean;
   sessionReset?: {
     previousSessionId: string;
@@ -107,6 +122,12 @@ export interface LLMTask {
   forceFree?: boolean;
 }
 
+export type AskAllOrigin = "auto_cs_situation" | "manual";
+
+interface FirstPanelStateStore {
+  hasSeenFirstPanel(userId: string): boolean;
+}
+
 export class UXHandlers {
   private readonly states = new Map<string, UserSessionState>();
   private readonly referrals?: ReferralService;
@@ -116,10 +137,12 @@ export class UXHandlers {
   private readonly balanceStore?: BalanceStore;
   private readonly billingConfig?: BillingConfig;
   private readonly botUsername?: string;
+  private readonly firstPanelStateStore?: FirstPanelStateStore;
 
   constructor(input?: {
     referrals?: ReferralService;
     analytics?: AnalyticsService;
+    firstPanelStateStore?: FirstPanelStateStore;
     adminUserIds?: Iterable<string>;
     bypassBalanceUserIds?: Iterable<string>;
     balanceStore?: BalanceStore;
@@ -128,6 +151,7 @@ export class UXHandlers {
   }) {
     this.referrals = input?.referrals;
     this.analytics = input?.analytics;
+    this.firstPanelStateStore = input?.firstPanelStateStore;
     this.botUsername = input?.botUsername;
     this.balanceStore = input?.balanceStore;
     this.billingConfig = input?.billingConfig;
@@ -153,7 +177,7 @@ export class UXHandlers {
     }
     state.lastProcessedUpdateId = event.updateId;
 
-    if (isRateLimited(state, now)) {
+    if (!shouldBypassRateLimit(event, state) && isRateLimited(state, now)) {
       return {
         messages: [{ text: "Слишком быстро. Подожди пару секунд и напиши ещё раз." }],
         state
@@ -167,6 +191,7 @@ export class UXHandlers {
         messages: commandResult.messages,
         state,
         llmTask: commandResult.llmTask,
+        analyticsContext: commandResult.analyticsContext,
         sessionReset: commandResult.sessionReset,
         clearLongTerm: commandResult.clearLongTerm
       };
@@ -179,18 +204,20 @@ export class UXHandlers {
         messages: callbackResult.messages,
         state,
         llmTask: callbackResult.llmTask,
+        analyticsContext: callbackResult.analyticsContext,
         sessionReset: callbackResult.sessionReset,
         clearLongTerm: callbackResult.clearLongTerm
       };
     }
 
     if (event.text !== undefined) {
-      const messages = this.handleText(event.text, state, event.userId);
+      const messages = this.handleText(event.text, state, event.userId, event.inputSource ?? "text", event.isForwarded === true);
       state.lastActivityTs = now;
       return {
         messages: messages.messages,
         state,
-        llmTask: messages.llmTask
+        llmTask: messages.llmTask,
+        analyticsContext: messages.analyticsContext
       };
     }
 
@@ -209,6 +236,9 @@ export class UXHandlers {
   ): {
     messages: OutgoingMessage[];
     llmTask?: LLMTask;
+    analyticsContext?: {
+      askAllOrigin?: AskAllOrigin;
+    };
     clearLongTerm?: boolean;
     sessionReset?: {
       previousSessionId: string;
@@ -216,16 +246,22 @@ export class UXHandlers {
   } {
     switch (command) {
       case "/start": {
+        const attribution = parseStartPayload(commandPayload);
         const referralResult = this.referrals?.applyStartPayload(userId, commandPayload);
+        this.referrals?.setUserSource(userId, attribution.source, attribution.campaign);
         this.analytics?.emitEvent({
           event: "start",
           userId,
           sessionId: state.sessionId,
           extra: {
             has_ref_code: Boolean(commandPayload?.trim().startsWith("ref_")),
-            referral_attributed: referralResult?.attributed ?? false
+            referral_attributed: referralResult?.attributed ?? false,
+            source: attribution.source ?? "organic",
+            ...(attribution.campaign != null ? { campaign: attribution.campaign } : {})
           }
         });
+        this.enterPanelInput(state, userId, null);
+        state.pendingUserText = null;
         return {
           messages: [
             {
@@ -285,10 +321,11 @@ export class UXHandlers {
         }
         const stats = this.analytics.getStatsSnapshot();
         const invited = this.referrals?.countInvitedUsers() ?? 0;
+        const sourceBreakdown = this.referrals?.getSourceBreakdown() ?? [];
         return {
           messages: [
             {
-              text: formatStatsMessage(stats, invited)
+              text: formatStatsMessage(stats, invited, sourceBreakdown)
             }
           ]
         };
@@ -337,6 +374,9 @@ export class UXHandlers {
   private handleCallback(callbackData: string, state: UserSessionState, userId: string): {
     messages: OutgoingMessage[];
     llmTask?: LLMTask;
+    analyticsContext?: {
+      askAllOrigin?: AskAllOrigin;
+    };
     clearLongTerm?: boolean;
     sessionReset?: {
       previousSessionId: string;
@@ -353,6 +393,19 @@ export class UXHandlers {
       return { messages: [{ text: crisis.text, keyboard: safetyHoldKeyboard() }] };
     }
 
+    if (callbackData === "conversation_done") {
+      return this.finishPendingConversation(state);
+    }
+
+    if (callbackData === "conversation_cancel") {
+      this.clearPendingConversation(state);
+      state.pendingUserText = null;
+      state.pendingMode = null;
+      state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
+      return { messages: [{ text: "Ок, очистил переписку. Продолжаем.", replyKeyboard: mainReplyKeyboard() }] };
+    }
+
     if (callbackData.startsWith("choose_friend:")) {
       const persona = callbackData.split(":")[1] as Persona | undefined;
       if (!persona || !["yan", "natasha", "anya", "max"].includes(persona)) {
@@ -363,7 +416,7 @@ export class UXHandlers {
         userId,
         sessionId: state.sessionId
       });
-      const pendingText = state.pendingUserText;
+      const pendingText = this.consumePendingConversation(state) ?? state.pendingUserText;
       const messages = this.selectPersona(state, persona);
       if (pendingText) {
         return {
@@ -395,10 +448,31 @@ export class UXHandlers {
       };
     }
 
+    if (callbackData === "cs_help_start") {
+      this.analytics?.emitEvent({
+        event: "cold_start_click",
+        userId,
+        sessionId: state.sessionId,
+        extra: { entry: "help_start" }
+      });
+      this.enterPanelInput(state, userId, null);
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{
+          text: "🌀 Аня: Что случилось? Можно коротко, можно длинно — как удобно.",
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
     if (callbackData === "cs_situation") {
-      state.lastPersonaBeforePanel = state.currentPersona;
-      state.pendingMode = "awaiting_panel_input";
-      state.pendingPanelScenario = null;
+      this.analytics?.emitEvent({
+        event: "cold_start_click",
+        userId,
+        sessionId: state.sessionId,
+        extra: { entry: "situation" }
+      });
+      this.enterPanelInput(state, userId, null);
       this.clearDangerConfirmations(state);
       return {
         messages: [{
@@ -407,13 +481,20 @@ export class UXHandlers {
             "❤️ Наташа — поддержит и назовёт чувства\n" +
             "🌀 Аня — задаст точный вопрос про главное\n" +
             "🎯 Макс — скажет как есть и отделит факты от эмоций\n\n" +
-            "Опиши ситуацию одним сообщением.",
+            "Кидай ситуацию, переписку, войс или скрин. Когда всё — нажми «Готово».",
           replyKeyboard: mainReplyKeyboard()
         }]
       };
     }
 
     if (callbackData === "cs_message") {
+      state.pendingAutoPanelFromColdStart = false;
+      this.analytics?.emitEvent({
+        event: "cold_start_click",
+        userId,
+        sessionId: state.sessionId,
+        extra: { entry: "message" }
+      });
       return {
         messages: [{
           text: "Что нужно?",
@@ -424,56 +505,47 @@ export class UXHandlers {
     }
 
     if (callbackData === "cs_compose") {
-      state.pendingMode = "awaiting_compose_input";
-      state.pendingPanelScenario = null;
+      this.analytics?.emitEvent({
+        event: "cold_start_click",
+        userId,
+        sessionId: state.sessionId,
+        extra: { entry: "compose" }
+      });
+      this.enterPanelInput(state, userId, "compose");
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return {
-          messages: [{
-            text: "📝 Кто поможет сформулировать?\n\n" +
-              "🧠 Ян — выстроит логику и структуру\n" +
-              "❤️ Наташа — поможет назвать и выразить чувства\n" +
-              "🌀 Аня — найдёт главное, что ты хочешь сказать\n" +
-              "🎯 Макс — напишет живо, с иронией и без воды",
-            keyboard: friendPickerKeyboard(),
-            replyKeyboard: mainReplyKeyboard()
-          }]
-        };
-      }
       return {
         messages: [{
-          text: "📝 Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон.",
+          text: "📝 Опиши, кому и что нужно написать. Если есть переписка, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».",
           replyKeyboard: mainReplyKeyboard()
         }]
       };
     }
 
     if (callbackData === "cs_reply") {
-      state.pendingMode = "awaiting_reply_input";
-      state.pendingPanelScenario = null;
+      this.analytics?.emitEvent({
+        event: "cold_start_click",
+        userId,
+        sessionId: state.sessionId,
+        extra: { entry: "reply" }
+      });
+      this.enterPanelInput(state, userId, "reply");
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return {
-          messages: [{
-            text: "💬 Кто поможет с ответом?\n\n" +
-              "🧠 Ян — разложит чужое сообщение и даст варианты\n" +
-              "❤️ Наташа — назовёт что ты чувствуешь и поможет из этого ответить\n" +
-              "🌀 Аня — увидит, что стоит за чужим сообщением\n" +
-              "🎯 Макс — ответит с юмором, коротко и по делу",
-            keyboard: friendPickerKeyboard(),
-            replyKeyboard: mainReplyKeyboard()
-          }]
-        };
-      }
       return {
         messages: [{
-          text: "💬 Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе.",
+          text: "💬 Вставь сообщение, на которое нужно ответить. Если важен контекст, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».",
           replyKeyboard: mainReplyKeyboard()
         }]
       };
     }
 
     if (callbackData === "cs_chat") {
+      state.pendingAutoPanelFromColdStart = false;
+      this.analytics?.emitEvent({
+        event: "cold_start_click",
+        userId,
+        sessionId: state.sessionId,
+        extra: { entry: "chat" }
+      });
       return {
         messages: [{
           text: "С кем хочешь поговорить?",
@@ -491,6 +563,7 @@ export class UXHandlers {
       state.currentPersona = persona;
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       this.analytics?.emitEvent({
         event: "choose_persona",
@@ -511,11 +584,13 @@ export class UXHandlers {
     }
 
     if (callbackData === "panel_start") {
-      if (state.pendingUserText) {
-        const pending = state.pendingUserText;
+      const pendingConversation = this.consumePendingConversation(state);
+      if (pendingConversation || state.pendingUserText) {
+        const pending = pendingConversation ?? state.pendingUserText ?? "";
         state.pendingUserText = null;
         state.pendingMode = null;
         state.pendingPanelScenario = null;
+        state.pendingAutoPanelFromColdStart = false;
         this.clearDangerConfirmations(state);
         return {
           messages: [{ text: "🤝 Разберём вместе.", replyKeyboard: mainReplyKeyboard() }],
@@ -523,6 +598,9 @@ export class UXHandlers {
             mode: "PANEL",
             scenario: null,
             userText: pending
+          },
+          analyticsContext: {
+            askAllOrigin: "manual"
           }
         };
       }
@@ -544,31 +622,34 @@ export class UXHandlers {
         state.pendingPanelScenario = null;
       }
       state.pendingMode = "awaiting_panel_input";
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       if (state.pendingPanelScenario === "compose") {
         return {
-          messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Напиши за меня».", replyKeyboard: mainReplyKeyboard() }]
+          messages: [{ text: "🤝 Переключил. Кидай переписку, войсы или скрины. Когда всё — нажми «Готово». Разберём всеми друзьями в формате «Напиши за меня».", replyKeyboard: mainReplyKeyboard() }]
         };
       }
       if (state.pendingPanelScenario === "reply") {
         return {
-          messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Помоги ответить».", replyKeyboard: mainReplyKeyboard() }]
+          messages: [{ text: "🤝 Переключил. Кидай переписку, войсы или скрины. Когда всё — нажми «Готово». Разберём всеми друзьями в формате «Помоги ответить».", replyKeyboard: mainReplyKeyboard() }]
         };
       }
       return {
-        messages: [{ text: "🤝 Ок. Следующее сообщение разберём вместе. Опиши ситуацию одним сообщением.", replyKeyboard: mainReplyKeyboard() }]
+        messages: [{ text: "🤝 Ок. Кидай ситуацию, переписку, войс или скрин. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }]
       };
     }
 
     if (callbackData === "panel_cancel") {
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       return { messages: [{ text: "Отменил режим 🤝. Продолжаем.", replyKeyboard: mainReplyKeyboard() }] };
     }
 
     if (callbackData === "friends_info") {
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       return { messages: [{ text: "Выбери, кого позвать.", keyboard: friendsKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
     }
 
@@ -615,6 +696,7 @@ export class UXHandlers {
     if (callbackData === "summary_now") {
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -710,9 +792,12 @@ export class UXHandlers {
     return { messages: [{ text: "Эта кнопка устарела. Выбери ещё раз." }] };
   }
 
-  private handleText(text: string, state: UserSessionState, userId: string): {
+  private handleText(text: string, state: UserSessionState, userId: string, source: ConversationPartSource, isForwarded: boolean): {
     messages: OutgoingMessage[];
     llmTask?: LLMTask;
+    analyticsContext?: {
+      askAllOrigin?: AskAllOrigin;
+    };
   } {
     const normalized = text.toLowerCase().trim();
     const quickAction = normalizeQuickActionText(text);
@@ -734,7 +819,7 @@ export class UXHandlers {
 
     const quickPersona = resolveQuickPersona(quickAction);
     if (quickPersona) {
-      const pendingText = state.pendingUserText;
+      const pendingText = this.consumePendingConversation(state) ?? state.pendingUserText;
       const messages = this.selectPersona(state, quickPersona);
       if (pendingText) {
         return {
@@ -748,6 +833,32 @@ export class UXHandlers {
         };
       }
       return { messages };
+    }
+
+    if (state.pendingConversationParts.length > 0 && isConversationDoneQuickAction(quickAction)) {
+      return this.finishPendingConversation(state);
+    }
+
+    if (state.pendingConversationParts.length > 0 && isConversationCancelQuickAction(quickAction)) {
+      this.clearPendingConversation(state);
+      state.pendingUserText = null;
+      state.pendingMode = null;
+      state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
+      return { messages: [{ text: "Ок, очистил переписку. Продолжаем.", replyKeyboard: mainReplyKeyboard() }] };
+    }
+
+    if (
+      state.pendingConversationParts.length > 0 &&
+      (summarySelection || composeSelection || replySelection || friendsSelection || panelRequested)
+    ) {
+      return {
+        messages: [{
+          text: "Сначала закончи переписку: нажми «Готово» или «Отмена».",
+          keyboard: conversationInputKeyboard(),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
     }
 
     if (quickAction === "помощь") {
@@ -812,26 +923,31 @@ export class UXHandlers {
     }
 
     if (state.pendingMode === "awaiting_compose_input" && replySelection) {
+      if (state.currentPersona === null) {
+        this.enterPanelInput(state, userId, "reply");
+        this.clearDangerConfirmations(state);
+        return { messages: [{ text: "💬 Вставь сообщение, на которое нужно ответить. Если важен контекст, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       state.pendingMode = "awaiting_reply_input";
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
-      }
       return { messages: [{ text: "💬 Переключил. Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе." }] };
     }
 
     if (state.pendingMode === "awaiting_reply_input" && composeSelection) {
+      if (state.currentPersona === null) {
+        this.enterPanelInput(state, userId, "compose");
+        this.clearDangerConfirmations(state);
+        return { messages: [{ text: "📝 Опиши, кому и что нужно написать. Если есть переписка, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       state.pendingMode = "awaiting_compose_input";
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
-      }
       return { messages: [{ text: "📝 Переключил. Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон." }] };
     }
 
     if ((state.pendingMode === "awaiting_compose_input" || state.pendingMode === "awaiting_reply_input") && summarySelection) {
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -846,20 +962,22 @@ export class UXHandlers {
       state.lastPersonaBeforePanel = state.currentPersona;
       state.pendingPanelScenario = state.pendingMode === "awaiting_compose_input" ? "compose" : "reply";
       state.pendingMode = "awaiting_panel_input";
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       if (state.pendingPanelScenario === "compose") {
         return {
-          messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Напиши за меня».", replyKeyboard: mainReplyKeyboard() }]
+          messages: [{ text: "🤝 Переключил. Кидай переписку, войсы или скрины. Когда всё — нажми «Готово». Разберём всеми друзьями в формате «Напиши за меня».", replyKeyboard: mainReplyKeyboard() }]
         };
       }
       return {
-        messages: [{ text: "🤝 Переключил. Следующее сообщение разберём всеми друзьями в формате «Помоги ответить».", replyKeyboard: mainReplyKeyboard() }]
+        messages: [{ text: "🤝 Переключил. Кидай переписку, войсы или скрины. Когда всё — нажми «Готово». Разберём всеми друзьями в формате «Помоги ответить».", replyKeyboard: mainReplyKeyboard() }]
       };
     }
 
     if (state.pendingMode === "awaiting_panel_input" && summarySelection) {
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -871,22 +989,28 @@ export class UXHandlers {
     }
 
     if (state.pendingMode === "awaiting_panel_input" && composeSelection) {
+      if (state.currentPersona === null) {
+        this.enterPanelInput(state, userId, "compose");
+        this.clearDangerConfirmations(state);
+        return { messages: [{ text: "📝 Опиши, кому и что нужно написать. Если есть переписка, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       state.pendingMode = "awaiting_compose_input";
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
-      }
       return { messages: [{ text: "📝 Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон." }] };
     }
 
     if (state.pendingMode === "awaiting_panel_input" && replySelection) {
+      if (state.currentPersona === null) {
+        this.enterPanelInput(state, userId, "reply");
+        this.clearDangerConfirmations(state);
+        return { messages: [{ text: "💬 Вставь сообщение, на которое нужно ответить. Если важен контекст, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       state.pendingMode = "awaiting_reply_input";
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
-      }
       return { messages: [{ text: "💬 Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе." }] };
     }
 
@@ -894,68 +1018,30 @@ export class UXHandlers {
       if (state.currentPersona === null) {
         return { messages: [{ text: "Сначала выбери друга.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
       }
-      state.pendingMode = null;
-      state.pendingPanelScenario = null;
-      this.clearDangerConfirmations(state);
-      return {
-        messages: [{ text: "📝 Собираю варианты формулировки..." }],
-        llmTask: {
-          mode: "SINGLE",
-          persona: state.currentPersona,
-          scenario: "compose",
-          userText: text
-        }
-      };
+      return this.appendPendingConversationPart(state, text, source);
     }
 
     if (state.pendingMode === "awaiting_reply_input") {
       if (state.currentPersona === null) {
         return { messages: [{ text: "Сначала выбери друга.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
       }
-      state.pendingMode = null;
-      state.pendingPanelScenario = null;
-      this.clearDangerConfirmations(state);
-      return {
-        messages: [{ text: "💬 Собираю варианты ответа..." }],
-        llmTask: {
-          mode: "SINGLE",
-          persona: state.currentPersona,
-          scenario: "reply",
-          userText: text
-        }
-      };
+      return this.appendPendingConversationPart(state, text, source);
     }
 
     if (state.pendingMode === "awaiting_panel_input") {
-      const panelScenario = state.pendingPanelScenario;
-      state.pendingMode = null;
-      state.pendingPanelScenario = null;
-      this.clearDangerConfirmations(state);
-      const panelIntro =
-        panelScenario === "compose"
-          ? "📝 Принял. Собираю варианты формулировки от всех друзей, это может занять до 20-30 секунд."
-          : panelScenario === "reply"
-            ? "💬 Принял. Собираю варианты ответа от всех друзей, это может занять до 20-30 секунд."
-            : "Принял. Собираю разбор от всех друзей, это может занять до 20-30 секунд.";
-      return {
-        messages: [{ text: panelIntro }],
-        llmTask: {
-          mode: "PANEL",
-          scenario: panelScenario,
-          userText: text
-        }
-      };
+      return this.appendPendingConversationPart(state, text, source);
     }
 
     if (panelRequested) {
       state.lastPersonaBeforePanel = state.currentPersona;
       state.pendingMode = "awaiting_panel_input";
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       return {
         messages: [
           {
-            text: "🤝 Ок. Следующее сообщение разберём вместе. Опиши ситуацию одним сообщением.",
+            text: "🤝 Ок. Кидай ситуацию, переписку, войс или скрин. Когда всё — нажми «Готово».",
             replyKeyboard: mainReplyKeyboard()
           }
         ]
@@ -965,6 +1051,7 @@ export class UXHandlers {
     if (summarySelection) {
       state.pendingMode = null;
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
       return {
         messages: [{ text: "📋 Собираю сводку текущей сессии..." }],
@@ -976,22 +1063,28 @@ export class UXHandlers {
     }
 
     if (composeSelection) {
+      if (state.currentPersona === null) {
+        this.enterPanelInput(state, userId, "compose");
+        this.clearDangerConfirmations(state);
+        return { messages: [{ text: "📝 Опиши, кому и что нужно написать. Если есть переписка, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       state.pendingMode = "awaiting_compose_input";
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return { messages: [{ text: "📝 Сначала выбери друга, который будет помогать формулировать.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
-      }
       return { messages: [{ text: "📝 Напиши, что нужно сформулировать: ситуацию, адресата и желаемый тон." }] };
     }
 
     if (replySelection) {
+      if (state.currentPersona === null) {
+        this.enterPanelInput(state, userId, "reply");
+        this.clearDangerConfirmations(state);
+        return { messages: [{ text: "💬 Вставь сообщение, на которое нужно ответить. Если важен контекст, войсы или скрины — кидай их следом. Когда всё — нажми «Готово».", replyKeyboard: mainReplyKeyboard() }] };
+      }
       state.pendingMode = "awaiting_reply_input";
       state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
       this.clearDangerConfirmations(state);
-      if (state.currentPersona === null) {
-        return { messages: [{ text: "💬 Сначала выбери друга, который будет помогать с ответом.", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }] };
-      }
       return { messages: [{ text: "💬 Вставь входящее сообщение и, если нужно, что ты хочешь получить на выходе." }] };
     }
 
@@ -1009,8 +1102,11 @@ export class UXHandlers {
     }
 
     if (state.currentPersona === null) {
-      state.pendingUserText = text;
-      return { messages: [{ text: "Понял. Кого позвать, чтобы ответить?", keyboard: startKeyboard() }] };
+      return this.appendPendingConversationPart(state, text, source);
+    }
+
+    if (isForwarded || source === "screenshot") {
+      return this.appendPendingConversationPart(state, text, source);
     }
 
     return {
@@ -1031,6 +1127,7 @@ export class UXHandlers {
     const wasReplyPending = previousPendingMode === "awaiting_reply_input";
     state.pendingMode = wasComposePending || wasReplyPending ? previousPendingMode : null;
     state.pendingPanelScenario = null;
+    state.pendingAutoPanelFromColdStart = false;
     this.clearDangerConfirmations(state);
     state.currentPersona = persona;
 
@@ -1064,6 +1161,169 @@ export class UXHandlers {
     }
 
     return [{ text: `Сейчас с тобой ${personaLabel(persona)}.`, replyKeyboard: mainReplyKeyboard() }];
+  }
+
+  private appendPendingConversationPart(
+    state: UserSessionState,
+    text: string,
+    source: ConversationPartSource
+  ): {
+    messages: OutgoingMessage[];
+  } {
+    const cleaned = text.trim();
+    if (cleaned.length === 0) {
+      return {
+        messages: [{
+          text: "Пустой фрагмент не добавил. Кидай текст, войс или скрин.",
+          keyboard: conversationInputKeyboard(),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+    if (state.pendingConversationParts.length >= MAX_CONVERSATION_PARTS) {
+      return {
+        messages: [{
+          text: `Уже ${MAX_CONVERSATION_PARTS} фрагментов. Нажми «Готово» или «Отмена».`,
+          keyboard: conversationInputKeyboard(),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    const nextParts = [...state.pendingConversationParts, { source, text: cleaned }];
+    if (formatConversationParts(nextParts).length > MAX_CONVERSATION_CHARS) {
+      return {
+        messages: [{
+          text: "Текста уже много. Нажми «Готово» — разберём то, что есть.",
+          keyboard: conversationInputKeyboard(),
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    state.pendingConversationParts = nextParts;
+    this.clearDangerConfirmations(state);
+
+    return {
+      messages: [{
+        text: formatConversationPartAck(state.pendingConversationParts.length),
+        keyboard: conversationInputKeyboard(),
+        replyKeyboard: mainReplyKeyboard()
+      }]
+    };
+  }
+
+  private finishPendingConversation(state: UserSessionState): {
+    messages: OutgoingMessage[];
+    llmTask?: LLMTask;
+    analyticsContext?: {
+      askAllOrigin?: AskAllOrigin;
+    };
+  } {
+    const userText = this.consumePendingConversation(state);
+    if (!userText) {
+      return {
+        messages: [{
+          text: "Пока нечего разбирать. Кинь текст, войс или скрин.",
+          replyKeyboard: mainReplyKeyboard()
+        }]
+      };
+    }
+
+    if (state.pendingMode === "awaiting_panel_input") {
+      const panelScenario = state.pendingPanelScenario;
+      const askAllOrigin: AskAllOrigin = state.pendingAutoPanelFromColdStart ? "auto_cs_situation" : "manual";
+      const forceFree = state.pendingAutoPanelFromColdStart;
+      state.pendingMode = null;
+      state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
+      this.clearDangerConfirmations(state);
+      const panelIntro =
+        panelScenario === "compose"
+          ? "📝 Принял переписку. Собираю варианты формулировки от всех друзей, это может занять до 20-30 секунд."
+          : panelScenario === "reply"
+            ? "💬 Принял переписку. Собираю варианты ответа от всех друзей, это может занять до 20-30 секунд."
+            : "Принял переписку. Собираю разбор от всех друзей, это может занять до 20-30 секунд.";
+      return {
+        messages: [{ text: panelIntro }],
+        llmTask: {
+          mode: "PANEL",
+          scenario: panelScenario,
+          userText,
+          ...(forceFree ? { forceFree: true } : {})
+        },
+        analyticsContext: {
+          askAllOrigin
+        }
+      };
+    }
+
+    if (state.pendingMode === "awaiting_compose_input" || state.pendingMode === "awaiting_reply_input") {
+      if (state.currentPersona === null) {
+        state.pendingUserText = userText;
+        return {
+          messages: [{ text: "Понял переписку. Кого позвать, чтобы ответить?", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }]
+        };
+      }
+      const scenario: ToolScenario = state.pendingMode === "awaiting_compose_input" ? "compose" : "reply";
+      state.pendingMode = null;
+      state.pendingPanelScenario = null;
+      state.pendingAutoPanelFromColdStart = false;
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{ text: scenario === "compose" ? "📝 Принял переписку. Собираю варианты формулировки..." : "💬 Принял переписку. Собираю варианты ответа..." }],
+        llmTask: {
+          mode: "SINGLE",
+          persona: state.currentPersona,
+          scenario,
+          userText
+        }
+      };
+    }
+
+    if (state.currentPersona === null) {
+      state.pendingUserText = userText;
+      this.clearDangerConfirmations(state);
+      return {
+        messages: [{ text: "Понял переписку. Кого позвать, чтобы ответить?", keyboard: startKeyboard(), replyKeyboard: mainReplyKeyboard() }]
+      };
+    }
+
+    this.clearDangerConfirmations(state);
+    return {
+      messages: [{ text: `(${personaLabel(state.currentPersona)}) Принял переписку.` }],
+      llmTask: {
+        mode: "SINGLE",
+        persona: state.currentPersona,
+        scenario: null,
+        userText
+      }
+    };
+  }
+
+  private consumePendingConversation(state: UserSessionState): string | null {
+    if (state.pendingConversationParts.length === 0) {
+      return null;
+    }
+    const text = formatConversationParts(state.pendingConversationParts);
+    this.clearPendingConversation(state);
+    return text;
+  }
+
+  private clearPendingConversation(state: UserSessionState): void {
+    state.pendingConversationParts = [];
+  }
+
+  private enterPanelInput(state: UserSessionState, userId: string, panelScenario: PanelScenario): void {
+    state.lastPersonaBeforePanel = state.currentPersona;
+    state.pendingMode = "awaiting_panel_input";
+    state.pendingPanelScenario = panelScenario;
+    state.pendingAutoPanelFromColdStart = this.shouldRunFreeColdStartPanel(state, userId);
+    this.clearPendingConversation(state);
+  }
+
+  private shouldRunFreeColdStartPanel(state: UserSessionState, userId: string): boolean {
+    return state.pendingAutoPanelFromColdStart || (this.firstPanelStateStore ? !this.firstPanelStateStore.hasSeenFirstPanel(userId) : false);
   }
 
   private clearDangerConfirmations(state: UserSessionState): void {
@@ -1155,6 +1415,58 @@ function normalizeQuickActionText(value: string): string {
     .trim();
 }
 
+function isConversationDoneQuickAction(quickAction: string): boolean {
+  return quickAction === "готово" || quickAction === "готов";
+}
+
+function isConversationCancelQuickAction(quickAction: string): boolean {
+  return quickAction === "отмена" || quickAction === "отменить" || quickAction === "сброс";
+}
+
+function shouldBypassRateLimit(event: IncomingEvent, state: UserSessionState): boolean {
+  if (state.pendingConversationParts.length === 0) {
+    return false;
+  }
+  if (event.text !== undefined) {
+    return true;
+  }
+  return event.callbackData === "conversation_done" || event.callbackData === "conversation_cancel";
+}
+
+function formatConversationPartAck(count: number): string {
+  return `Принял ${count} ${pluralizeFragment(count)}. Кидай ещё переписку, войс или скрин. Когда всё — нажми «Готово».`;
+}
+
+function pluralizeFragment(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) {
+    return "фрагмент";
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return "фрагмента";
+  }
+  return "фрагментов";
+}
+
+function formatConversationParts(parts: UserSessionState["pendingConversationParts"]): string {
+  return parts
+    .map((part, index) => `[Фрагмент ${index + 1}: ${conversationPartSourceLabel(part.source)}]\n${part.text}`)
+    .join("\n\n");
+}
+
+function conversationPartSourceLabel(source: ConversationPartSource): string {
+  switch (source) {
+    case "voice":
+      return "войс";
+    case "screenshot":
+      return "скрин";
+    case "text":
+    default:
+      return "текст";
+  }
+}
+
 function isRateLimited(state: UserSessionState, now: number): boolean {
   const rate = state.rateLimitState;
   if (now - rate.windowStartTs > RATE_LIMIT_WINDOW_MS) {
@@ -1193,12 +1505,16 @@ function formatStatsMessage(
       shareClicked: number;
     };
   },
-  invitedUsersTotal: number
+  invitedUsersTotal: number,
+  sourceBreakdown: Array<{ source: string; count: number }>
 ): string {
   const activationToday = formatRatio(stats.today.askAll, stats.today.starts);
   const shareToday = formatRatio(stats.today.shareClicked, stats.today.askAll);
   const activation7d = formatRatio(stats.sevenDays.askAll, stats.sevenDays.starts);
   const share7d = formatRatio(stats.sevenDays.shareClicked, stats.sevenDays.askAll);
+  const sourceLines = sourceBreakdown.length > 0
+    ? sourceBreakdown.map((item) => `• ${item.source}: ${item.count}`).join("\n")
+    : "• organic: 0";
 
   return (
     "📊 Статистика\n\n" +
@@ -1221,7 +1537,9 @@ function formatStatsMessage(
     `• activation 7d: ${activation7d}\n` +
     `• share rate 7d: ${share7d}\n\n` +
     "Рефералы:\n" +
-    `• всего приглашённых: ${invitedUsersTotal}`
+    `• всего приглашённых: ${invitedUsersTotal}\n\n` +
+    "Источники:\n" +
+    sourceLines
   );
 }
 

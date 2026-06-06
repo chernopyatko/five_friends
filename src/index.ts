@@ -9,6 +9,8 @@ import { BalanceStore } from "./billing/balanceStore.js";
 import { loadBillingConfig, type BillingConfig } from "./billing/config.js";
 import { parseTributeWebhookEvent, verifyTributeSignature } from "./billing/tributeWebhook.js";
 import { ReferralService } from "./growth/referral.js";
+import { sanitizeCampaign } from "./growth/sourceAttribution.js";
+import { MODEL_ROUTES, resolveModelOverride } from "./llm/modelRouting.js";
 import { createOpenAIResponsesCompatClient } from "./llm/openaiCompatClient.js";
 import { AnalyticsService } from "./observability/analytics.js";
 import { createLogger, toSafeLog } from "./observability/logger.js";
@@ -16,9 +18,11 @@ import { MetricsCollector } from "./observability/metrics.js";
 import { OpenAILLMResponder } from "./runtime/llmResponder.js";
 import { processReminders } from "./scheduler/reminderHandler.js";
 import { SqliteStore } from "./state/store.js";
-import { BotRuntime } from "./telegram/bot.js";
-import type { InlineKeyboard, ReplyKeyboard } from "./telegram/keyboard.js";
+import { BotRuntime, PAYWALL_TEXT } from "./telegram/bot.js";
+import { paywallKeyboard, type InlineKeyboard, type ReplyKeyboard } from "./telegram/keyboard.js";
 import { UXHandlers, type IncomingEvent, type OutgoingMessage } from "./telegram/uxHandlers.js";
+import { ImageRecognitionError, OpenAIImageRecognizer } from "./telegram/imageRecognition.js";
+import { OpenAIVoiceTranscriber, VoiceTranscriptionError } from "./telegram/voiceTranscription.js";
 import { hashUserId } from "./utils/hashUserId.js";
 
 const SUPPORTED_COMMANDS = ["/start", "/help", "/friends", "/settings", "/demo", "/reset", "/privacy", "/forget", "/stats", "/balance"] as const;
@@ -38,10 +42,21 @@ const STARTUP_RETRY_BASE_MS = 5_000;
 const STARTUP_RETRY_MAX_MS = 60_000;
 const TYPING_INITIAL_DELAY_MS = 300;
 const TYPING_REPEAT_MS = 4_000;
+const VOICE_MAX_DURATION_SECONDS = 600;
+const VOICE_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+const SCREENSHOT_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MEDIA_QUOTA_WINDOW_MS = 60 * 60 * 1000;
+const MEDIA_QUOTA_MAX_POINTS = 24;
+const VOICE_SECONDS_PER_MEDIA_QUOTA_POINT = 60;
 const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
 const TRIBUTE_WEBHOOK_PATH = "/api/tribute/webhook";
 const REMINDER_TRIGGER_PATH = "/api/reminders/trigger";
+const GO_REDIRECT_PATH = "/go";
 const KNOWN_TRIBUTE_EVENTS = new Set(["new_digital_product", "digital_product_refunded"]);
+const GO_REDIRECT_CSP = "default-src 'none'; script-src https://www.googletagmanager.com 'unsafe-inline'; connect-src https://www.google-analytics.com";
+const MEDIA_PAYWALL_TEXT =
+  `${PAYWALL_TEXT}\n\n` +
+  "Голосовые и скрины распознаются через платный API. Пополни баланс или отправь текстом.";
 
 export async function main(): Promise<void> {
   const logger = createLogger();
@@ -75,10 +90,25 @@ export async function main(): Promise<void> {
   }
 
   const openaiApiKey = process.env.OPENAI_API_KEY;
-  const responder = openaiApiKey
-    ? new OpenAILLMResponder(createOpenAIResponsesCompatClient(new OpenAI({ apiKey: openaiApiKey })), {
+  const openaiClient = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : undefined;
+  const responder = openaiClient
+    ? new OpenAILLMResponder(createOpenAIResponsesCompatClient(openaiClient), {
         store,
         analytics
+      })
+    : undefined;
+  const voiceTranscriber = openaiClient
+    ? new OpenAIVoiceTranscriber({
+        botToken,
+        client: openaiClient,
+        model: resolveModelOverride(process.env.VOICE_TRANSCRIPTION_MODEL, MODEL_ROUTES.voiceTranscription)
+      })
+    : undefined;
+  const imageRecognizer = openaiClient
+    ? new OpenAIImageRecognizer({
+        botToken,
+        client: openaiClient,
+        model: resolveModelOverride(process.env.IMAGE_RECOGNITION_MODEL, MODEL_ROUTES.imageRecognition)
       })
     : undefined;
   if (!responder) {
@@ -124,6 +154,7 @@ export async function main(): Promise<void> {
     new UXHandlers({
       referrals,
       analytics,
+      firstPanelStateStore: store,
       adminUserIds,
       bypassBalanceUserIds,
       balanceStore,
@@ -137,10 +168,12 @@ export async function main(): Promise<void> {
       botUsername,
       logger,
       balanceStore,
+      firstPanelStateStore: store,
       bypassBalanceUserIds,
       billingConfig
     }
   );
+  const mediaQuota = new MediaQuota();
   let webhookServer: Server | undefined;
   let shuttingDown = false;
 
@@ -160,8 +193,17 @@ export async function main(): Promise<void> {
     if (webhookServer) {
       webhookServer.close();
     }
-    void analytics.shutdown();
-    store.close();
+    analytics.shutdown().catch((err) => {
+      logger.warn(
+        toSafeLog({
+          outcome: "analytics_shutdown_error",
+          details: { error: err instanceof Error ? err.message : "unknown" }
+        }),
+        "Analytics shutdown failed"
+      );
+    }).finally(() => {
+      store.close();
+    });
   };
 
   process.once("SIGINT", () => stopBot("SIGINT"));
@@ -191,6 +233,313 @@ export async function main(): Promise<void> {
       }),
       "Handled text update"
     );
+  });
+
+  bot.on("message:voice", async (ctx) => {
+    if (!ctx.from || !ctx.message?.voice) {
+      return;
+    }
+    const startedAt = Date.now();
+    const userId = String(ctx.from.id);
+    const preflightFailure = getVoicePreflightFailure(ctx.message.voice);
+    if (preflightFailure) {
+      await ctx.reply(formatVoicePreflightFailure(preflightFailure));
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "voice_rejected",
+          details: {
+            reason: preflightFailure
+          }
+        }),
+        "Voice update rejected before transcription"
+      );
+      return;
+    }
+    if (!voiceTranscriber) {
+      await ctx.reply("Голосовые сейчас недоступны: не настроено распознавание. Отправь текстом.");
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "voice_transcription_unconfigured"
+        }),
+        "Voice update skipped because transcription is not configured"
+      );
+      return;
+    }
+    if (getPaidMediaPreflightFailure({
+      userId,
+      billingConfig,
+      balanceStore,
+      bypassBalanceUserIds
+    })) {
+      await sendMessages(ctx, [{
+        text: MEDIA_PAYWALL_TEXT,
+        keyboard: paywallKeyboard(billingConfig.tributeLinks)
+      }]);
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "voice_rejected",
+          details: {
+            reason: "insufficient_balance"
+          }
+        }),
+        "Voice update rejected before transcription"
+      );
+      return;
+    }
+    const quota = mediaQuota.tryConsume(userId, getVoiceMediaQuotaPoints(ctx.message.voice));
+    if (!quota.allowed) {
+      await ctx.reply(formatMediaQuotaFailure(quota));
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "voice_rejected",
+          details: {
+            reason: "media_quota_exceeded"
+          }
+        }),
+        "Voice update rejected by media quota"
+      );
+      return;
+    }
+
+    let transcript: string;
+    try {
+      transcript = await runWithTypingIndicator(ctx, async () => {
+        const telegramFile = await ctx.getFile();
+        return voiceTranscriber.transcribe({
+          fileId: ctx.message.voice.file_id,
+          fileUniqueId: ctx.message.voice.file_unique_id,
+          filePath: telegramFile.file_path
+        });
+      });
+    } catch (error) {
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "voice_transcription_failed",
+          details: {
+            errorName: error instanceof Error ? error.name : "unknown",
+            reason: error instanceof VoiceTranscriptionError ? error.reason : undefined
+          }
+        }),
+        "Failed to transcribe voice update"
+      );
+      await ctx.reply("Не смог разобрать голосовое. Перезапиши чуть громче или отправь текстом.");
+      return;
+    }
+
+    try {
+      const result = await runWithTypingIndicator(ctx, () => runtime.processEvent(toVoiceTextEvent(ctx, transcript)));
+      await sendMessages(ctx, result.messages);
+
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.info(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          mode: result.llmTask?.mode,
+          latencyMs: Date.now() - startedAt,
+          outcome: "ok"
+        }),
+        "Handled voice update"
+      );
+    } catch (error) {
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_voice");
+      logger.error(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "voice_runtime_failed",
+          details: {
+            errorName: error instanceof Error ? error.name : "unknown"
+          }
+        }),
+        "Failed to process transcribed voice update"
+      );
+      await ctx.reply("Голосовое распознал, но ответ сейчас не собрался. Попробуй ещё раз.");
+    }
+  });
+
+  bot.on("message:photo", async (ctx) => {
+    if (!ctx.from || !ctx.message?.photo) {
+      return;
+    }
+    const startedAt = Date.now();
+    const userId = String(ctx.from.id);
+    const photo = getLargestPhoto(ctx.message.photo);
+    if (!photo) {
+      return;
+    }
+
+    const preflightFailure = getScreenshotPreflightFailure(photo);
+    if (preflightFailure) {
+      await ctx.reply(formatScreenshotPreflightFailure(preflightFailure));
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "screenshot_rejected",
+          details: {
+            reason: preflightFailure
+          }
+        }),
+        "Screenshot update rejected before recognition"
+      );
+      return;
+    }
+    if (!imageRecognizer) {
+      await ctx.reply("Скриншоты сейчас недоступны: не настроено распознавание. Отправь текстом.");
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "screenshot_recognition_unconfigured"
+        }),
+        "Screenshot update skipped because recognition is not configured"
+      );
+      return;
+    }
+    if (getPaidMediaPreflightFailure({
+      userId,
+      billingConfig,
+      balanceStore,
+      bypassBalanceUserIds
+    })) {
+      await sendMessages(ctx, [{
+        text: MEDIA_PAYWALL_TEXT,
+        keyboard: paywallKeyboard(billingConfig.tributeLinks)
+      }]);
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "screenshot_rejected",
+          details: {
+            reason: "insufficient_balance"
+          }
+        }),
+        "Screenshot update rejected before recognition"
+      );
+      return;
+    }
+    const quota = mediaQuota.tryConsume(userId, getScreenshotMediaQuotaPoints());
+    if (!quota.allowed) {
+      await ctx.reply(formatMediaQuotaFailure(quota));
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "screenshot_rejected",
+          details: {
+            reason: "media_quota_exceeded"
+          }
+        }),
+        "Screenshot update rejected by media quota"
+      );
+      return;
+    }
+
+    let recognizedText: string;
+    try {
+      recognizedText = await runWithTypingIndicator(ctx, async () => {
+        const telegramFile = await ctx.api.getFile(photo.file_id);
+        return imageRecognizer.recognize({
+          fileId: photo.file_id,
+          fileUniqueId: photo.file_unique_id,
+          filePath: telegramFile.file_path
+        });
+      });
+    } catch (error) {
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.warn(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "screenshot_recognition_failed",
+          details: {
+            errorName: error instanceof Error ? error.name : "unknown",
+            reason: error instanceof ImageRecognitionError ? error.reason : undefined
+          }
+        }),
+        "Failed to recognize screenshot update"
+      );
+      await ctx.reply("Не смог разобрать скрин. Пришли чётче или отправь текстом.");
+      return;
+    }
+
+    try {
+      const result = await runWithTypingIndicator(ctx, () => runtime.processEvent(toScreenshotTextEvent(ctx, recognizedText)));
+      await sendMessages(ctx, result.messages);
+
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.info(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          mode: result.llmTask?.mode,
+          latencyMs: Date.now() - startedAt,
+          outcome: "ok"
+        }),
+        "Handled screenshot update"
+      );
+    } catch (error) {
+      metrics.increment("updates_total");
+      metrics.increment("updates_message_photo");
+      logger.error(
+        toSafeLog({
+          requestId: String(ctx.update.update_id),
+          userHash: hashUserId(ctx.from.id),
+          latencyMs: Date.now() - startedAt,
+          outcome: "screenshot_runtime_failed",
+          details: {
+            errorName: error instanceof Error ? error.name : "unknown"
+          }
+        }),
+        "Failed to process recognized screenshot update"
+      );
+      await ctx.reply("Скрин распознал, но ответ сейчас не собрался. Попробуй ещё раз.");
+    }
   });
 
   bot.on("callback_query:data", async (ctx) => {
@@ -229,19 +578,18 @@ export async function main(): Promise<void> {
     );
   });
 
-  const shouldStartWebhookServer = Boolean(billingConfig.tributeApiSecret || process.env.REMINDER_SECRET);
-  if (shouldStartWebhookServer) {
-    const webhookPort = parsePort(process.env.WEBHOOK_PORT) ?? parsePort(process.env.PORT) ?? 3100;
-    webhookServer = await startWebhookServer({
-      port: webhookPort,
-      bot,
-      billingConfig,
-      balanceStore,
-      analytics,
-      store,
-      logger
-    });
-  }
+  const webhookPort = parsePort(process.env.WEBHOOK_PORT) ?? parsePort(process.env.PORT) ?? 3100;
+  webhookServer = await startWebhookServer({
+    port: webhookPort,
+    bot,
+    billingConfig,
+    balanceStore,
+    analytics,
+    store,
+    logger,
+    botUsername,
+    gaMeasurementId: process.env.GA_MEASUREMENT_ID
+  });
 
   let startupAttempt = 0;
   while (!shuttingDown) {
@@ -314,9 +662,15 @@ async function startWebhookServer(input: {
   analytics: AnalyticsService;
   store: SqliteStore;
   logger: ReturnType<typeof createLogger>;
+  botUsername?: string;
+  gaMeasurementId?: string;
 }): Promise<Server> {
   const server = createServer((req, res) => {
     const urlPath = req.url?.split("?")[0];
+    if (urlPath === GO_REDIRECT_PATH && req.method === "GET") {
+      writeGoRedirect(res, req.url ?? GO_REDIRECT_PATH, input.botUsername, input.gaMeasurementId);
+      return;
+    }
     if (urlPath === TRIBUTE_WEBHOOK_PATH) {
       void handleTributeWebhookRequest(req, res, input);
       return;
@@ -632,6 +986,102 @@ function writeJson(res: ServerResponse, statusCode: number, body: Record<string,
   res.end(JSON.stringify(body));
 }
 
+interface GoRedirectResponse {
+  statusCode: number;
+  contentType: string;
+  body: string;
+  csp?: string;
+}
+
+export function buildGoRedirectResponse(input: {
+  requestUrl: string;
+  botUsername?: string;
+  gaMeasurementId?: string;
+}): GoRedirectResponse {
+  const normalizedUsername = (input.botUsername ?? "").trim().replace(/^@/, "");
+  if (normalizedUsername.length === 0) {
+    return {
+      statusCode: 503,
+      contentType: "text/plain; charset=utf-8",
+      body: "Bot not configured"
+    };
+  }
+
+  const requestUrl = new URL(input.requestUrl, "http://localhost");
+  const rawCampaign = requestUrl.searchParams.get("utm_campaign") ?? requestUrl.searchParams.get("campaign");
+  const campaign = rawCampaign ? sanitizeCampaign(rawCampaign) : null;
+  const deepLink = campaign
+    ? `https://t.me/${normalizedUsername}?start=gads_${encodeURIComponent(campaign)}`
+    : `https://t.me/${normalizedUsername}`;
+  const escapedDeepLink = escapeHtml(deepLink);
+  const gtagScript = buildGtagScript(input.gaMeasurementId);
+
+  return {
+    statusCode: 200,
+    contentType: "text/html; charset=utf-8",
+    csp: GO_REDIRECT_CSP,
+    body:
+      "<!DOCTYPE html>\n" +
+      "<html><head>\n" +
+      '<meta charset="utf-8">\n' +
+      `<meta http-equiv="refresh" content="1;url=${escapedDeepLink}">\n` +
+      "<title>Переход в бота</title>\n" +
+      `${gtagScript}\n` +
+      "</head><body>\n" +
+      `<p>Переход в бота... <a href="${escapedDeepLink}">Открыть</a></p>\n` +
+      "</body></html>"
+  };
+}
+
+function writeGoRedirect(
+  res: ServerResponse,
+  requestUrl: string,
+  botUsername: string | undefined,
+  gaMeasurementId: string | undefined
+): void {
+  const response = buildGoRedirectResponse({
+    requestUrl,
+    botUsername,
+    gaMeasurementId
+  });
+  res.statusCode = response.statusCode;
+  res.setHeader("content-type", response.contentType);
+  if (response.csp) {
+    res.setHeader("content-security-policy", response.csp);
+  }
+  res.end(response.body);
+}
+
+function buildGtagScript(rawMeasurementId: string | undefined): string {
+  const measurementId = sanitizeGaMeasurementId(rawMeasurementId);
+  if (!measurementId) {
+    return "";
+  }
+  const encodedId = encodeURIComponent(measurementId);
+  const escapedId = escapeHtml(measurementId);
+  return (
+    `<script async src="https://www.googletagmanager.com/gtag/js?id=${encodedId}"></script>\n` +
+    `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${escapedId}');</script>`
+  );
+}
+
+function sanitizeGaMeasurementId(raw: string | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+  const normalized = raw.trim().replace(/[^a-zA-Z0-9-]/g, "").slice(0, 64);
+  return normalized.length > 0 ? normalized : null;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 class RequestBodyTooLargeError extends Error {
   constructor() {
     super("Request body exceeds limit.");
@@ -654,7 +1104,8 @@ function toMessageEvent(ctx: Context): IncomingEvent {
   return {
     updateId: ctx.update.update_id,
     userId: String(ctx.from?.id ?? ""),
-    text
+    text,
+    ...(isForwardedMessage(ctx.message) ? { isForwarded: true } : {})
   };
 }
 
@@ -664,6 +1115,198 @@ function toCallbackEvent(ctx: Context): IncomingEvent {
     userId: String(ctx.from?.id ?? ""),
     callbackData: ctx.callbackQuery?.data
   };
+}
+
+interface EventSourceContext {
+  update: {
+    update_id: number;
+  };
+  from?: {
+    id: number | string;
+  };
+  message?: unknown;
+}
+
+export function toVoiceTextEvent(ctx: EventSourceContext, text: string): IncomingEvent {
+  return {
+    updateId: ctx.update.update_id,
+    userId: String(ctx.from?.id ?? ""),
+    text,
+    inputSource: "voice",
+    ...(isForwardedMessage(ctx.message) ? { isForwarded: true } : {})
+  };
+}
+
+export function toScreenshotTextEvent(ctx: EventSourceContext, text: string): IncomingEvent {
+  return {
+    updateId: ctx.update.update_id,
+    userId: String(ctx.from?.id ?? ""),
+    text,
+    inputSource: "screenshot",
+    ...(isForwardedMessage(ctx.message) ? { isForwarded: true } : {})
+  };
+}
+
+function isForwardedMessage(message: unknown): boolean {
+  if (typeof message !== "object" || message === null) {
+    return false;
+  }
+  return "forward_origin" in message || "forward_date" in message;
+}
+
+type VoicePreflightFailure = "too_long" | "too_large";
+
+interface VoicePreflightInput {
+  duration?: number;
+  file_size?: number;
+}
+
+export function getVoicePreflightFailure(voice: VoicePreflightInput): VoicePreflightFailure | null {
+  if (typeof voice.duration === "number" && voice.duration > VOICE_MAX_DURATION_SECONDS) {
+    return "too_long";
+  }
+  if (typeof voice.file_size === "number" && voice.file_size > VOICE_MAX_FILE_SIZE_BYTES) {
+    return "too_large";
+  }
+  return null;
+}
+
+function formatVoicePreflightFailure(reason: VoicePreflightFailure): string {
+  if (reason === "too_long") {
+    return "Голосовое слишком длинное. Скинь до 10 минут или отправь текстом.";
+  }
+  return "Голосовое слишком большое. Сожми/перезапиши короче или отправь текстом.";
+}
+
+type ScreenshotPreflightFailure = "too_large";
+
+export interface TelegramPhotoSizeInput {
+  file_id: string;
+  file_unique_id?: string;
+  width: number;
+  height: number;
+  file_size?: number;
+}
+
+export function getLargestPhoto(photos: readonly TelegramPhotoSizeInput[]): TelegramPhotoSizeInput | null {
+  if (photos.length === 0) {
+    return null;
+  }
+  return photos.reduce((largest, photo) => {
+    const largestScore = largest.file_size ?? largest.width * largest.height;
+    const photoScore = photo.file_size ?? photo.width * photo.height;
+    return photoScore > largestScore ? photo : largest;
+  });
+}
+
+export function getScreenshotPreflightFailure(photo: Pick<TelegramPhotoSizeInput, "file_size">): ScreenshotPreflightFailure | null {
+  if (typeof photo.file_size === "number" && photo.file_size > SCREENSHOT_MAX_FILE_SIZE_BYTES) {
+    return "too_large";
+  }
+  return null;
+}
+
+type PaidMediaPreflightFailure = "insufficient_balance";
+
+interface PaidMediaPreflightInput {
+  userId: string;
+  billingConfig: BillingConfig;
+  balanceStore: BalanceStore;
+  bypassBalanceUserIds: Set<string>;
+}
+
+export function getPaidMediaPreflightFailure(input: PaidMediaPreflightInput): PaidMediaPreflightFailure | null {
+  if (!input.billingConfig.isConfigured || input.bypassBalanceUserIds.has(input.userId)) {
+    return null;
+  }
+  input.balanceStore.ensureBalance(input.userId);
+  return input.balanceStore.getBalance(input.userId) < 1 ? "insufficient_balance" : null;
+}
+
+interface MediaQuotaState {
+  windowStartTs: number;
+  points: number;
+}
+
+export type MediaQuotaResult =
+  | {
+      allowed: true;
+      maxPoints: number;
+      usedPoints: number;
+      remainingPoints: number;
+    }
+  | {
+      allowed: false;
+      maxPoints: number;
+      usedPoints: number;
+      requestedPoints: number;
+      retryAfterMs: number;
+    };
+
+export class MediaQuota {
+  private readonly states = new Map<string, MediaQuotaState>();
+  private readonly windowMs: number;
+  private readonly maxPoints: number;
+
+  constructor(options: { windowMs?: number; maxPoints?: number } = {}) {
+    this.windowMs = options.windowMs ?? MEDIA_QUOTA_WINDOW_MS;
+    this.maxPoints = options.maxPoints ?? MEDIA_QUOTA_MAX_POINTS;
+  }
+
+  tryConsume(userId: string, points: number, now: number = Date.now()): MediaQuotaResult {
+    const requestedPoints = normalizeQuotaPoints(points);
+    const existing = this.states.get(userId);
+    const state = existing && now - existing.windowStartTs < this.windowMs
+      ? existing
+      : { windowStartTs: now, points: 0 };
+
+    if (state.points + requestedPoints > this.maxPoints) {
+      this.states.set(userId, state);
+      return {
+        allowed: false,
+        maxPoints: this.maxPoints,
+        usedPoints: state.points,
+        requestedPoints,
+        retryAfterMs: Math.max(0, state.windowStartTs + this.windowMs - now)
+      };
+    }
+
+    state.points += requestedPoints;
+    this.states.set(userId, state);
+    return {
+      allowed: true,
+      maxPoints: this.maxPoints,
+      usedPoints: state.points,
+      remainingPoints: Math.max(0, this.maxPoints - state.points)
+    };
+  }
+}
+
+export function getVoiceMediaQuotaPoints(voice: Pick<VoicePreflightInput, "duration">): number {
+  const duration = typeof voice.duration === "number" && Number.isFinite(voice.duration)
+    ? Math.max(1, voice.duration)
+    : 1;
+  return Math.max(1, Math.ceil(duration / VOICE_SECONDS_PER_MEDIA_QUOTA_POINT));
+}
+
+export function getScreenshotMediaQuotaPoints(): number {
+  return 1;
+}
+
+function normalizeQuotaPoints(points: number): number {
+  return Number.isFinite(points) ? Math.max(1, Math.ceil(points)) : 1;
+}
+
+function formatScreenshotPreflightFailure(reason: ScreenshotPreflightFailure): string {
+  if (reason === "too_large") {
+    return "Скрин слишком большой. Пришли сжатым фото или текстом.";
+  }
+  return "Не смог принять скрин. Пришли фото поменьше или текстом.";
+}
+
+function formatMediaQuotaFailure(result: Extract<MediaQuotaResult, { allowed: false }>): string {
+  const retryMinutes = Math.max(1, Math.ceil(result.retryAfterMs / 60_000));
+  return `Слишком много войсов/скринов за короткое время. Подожди ${retryMinutes} мин. или отправь текстом.`;
 }
 
 export interface ParsedSupportedCommand {

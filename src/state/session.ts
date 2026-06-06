@@ -1,5 +1,6 @@
 export type Persona = "yan" | "natasha" | "anya" | "max";
 export type PanelScenario = "compose" | "reply" | null;
+export type ConversationPartSource = "text" | "voice" | "screenshot";
 export type PendingMode =
   | "awaiting_panel_input"
   | "awaiting_compose_input"
@@ -16,10 +17,17 @@ export interface RateLimitState {
   count: number;
 }
 
+export interface PendingConversationPart {
+  source: ConversationPartSource;
+  text: string;
+}
+
 export interface UserSessionState {
   currentPersona: Persona | null;
   pendingMode: PendingMode;
+  pendingAutoPanelFromColdStart: boolean;
   pendingUserText: string | null;
+  pendingConversationParts: PendingConversationPart[];
   pendingForgetConfirmation: boolean;
   pendingResetConfirmation: boolean;
   lastPersonaBeforePanel: Persona | null;
@@ -45,7 +53,9 @@ export function createInitialSessionState(input: {
   return {
     currentPersona: null,
     pendingMode: null,
+    pendingAutoPanelFromColdStart: false,
     pendingUserText: null,
+    pendingConversationParts: [],
     pendingForgetConfirmation: false,
     pendingResetConfirmation: false,
     lastPersonaBeforePanel: null,

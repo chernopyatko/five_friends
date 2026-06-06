@@ -1,4 +1,5 @@
 import { runGenerator, type GeneratorApiClient } from "../llm/generator.js";
+import { MODEL_ROUTES } from "../llm/modelRouting.js";
 import { buildPromptInstructions } from "../llm/promptBuilder.js";
 import { runRouter, type RouterApiClient } from "../llm/router.js";
 import type { RouterDecision } from "../llm/routerSchema.js";
@@ -147,7 +148,7 @@ export class OpenAILLMResponder implements LLMResponder {
       mode: effectiveMode,
       instructions,
       userText: task.userText,
-      escalateSingle: effectiveMode === "SINGLE" ? policy.model === "gpt-5.2" : false
+      escalateSingle: effectiveMode === "SINGLE" ? policy.model === MODEL_ROUTES.singleEscalated : false
     });
 
     const fallbackText = buildFallbackTextForMode(effectiveMode, persona);
@@ -257,7 +258,7 @@ export class OpenAILLMResponder implements LLMResponder {
   private async tryRouterDecision(userText: string): Promise<RouterDecision | null> {
     try {
       return await runRouter(this.client, {
-        model: "gpt-5-mini",
+        model: MODEL_ROUTES.router,
         instructions: ROUTER_INSTRUCTIONS,
         userText
       });

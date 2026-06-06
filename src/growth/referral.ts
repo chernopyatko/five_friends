@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { Logger as PinoLogger } from "pino";
 
+import type { AttributionSource } from "./sourceAttribution.js";
 import { hashUserId } from "../utils/hashUserId.js";
 
 const INVITER_CODE_LENGTH = 10;
@@ -166,6 +167,33 @@ export class ReferralService {
       `)
       .get();
     return Number(row?.total ?? 0);
+  }
+
+  setUserSource(userId: string, source: AttributionSource | null, campaign: string | null): void {
+    this.ensureUser(userId);
+    if (source === null) {
+      return;
+    }
+    const normalizedCampaign = campaign && campaign.length > 0 ? campaign : null;
+    this.db
+      .prepare<[string, string | null, string]>(`
+        UPDATE users
+        SET source = ?, campaign = ?
+        WHERE user_id = ?
+          AND source IS NULL
+      `)
+      .run(source, normalizedCampaign, userId);
+  }
+
+  getSourceBreakdown(): Array<{ source: string; count: number }> {
+    return this.db
+      .prepare<[], { source: string; count: number }>(`
+        SELECT COALESCE(source, 'organic') AS source, COUNT(*) AS count
+        FROM users
+        GROUP BY COALESCE(source, 'organic')
+        ORDER BY count DESC
+      `)
+      .all();
   }
 
   applyStartPayload(userId: string, payload?: string | null): ReferralAttributionResult {

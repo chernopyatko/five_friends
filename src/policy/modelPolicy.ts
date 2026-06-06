@@ -1,8 +1,14 @@
 import type { BotMode } from "../llm/schemas.js";
+import { MODEL_ROUTES } from "../llm/modelRouting.js";
 import type { RouterDecision } from "../llm/routerSchema.js";
 import type { PendingMode } from "../state/session.js";
 
 type ForcedMode = Extract<BotMode, "PANEL" | "SUMMARY">;
+type RoutedPolicyModel =
+  | typeof MODEL_ROUTES.askAll
+  | typeof MODEL_ROUTES.single
+  | typeof MODEL_ROUTES.summary
+  | "fixed";
 
 export interface ModelPolicyInput {
   userText: string;
@@ -18,7 +24,7 @@ export interface ModelPolicyInput {
 
 export interface ModelPolicyResult {
   mode: BotMode;
-  model: "gpt-5.2" | "gpt-5.1" | "gpt-5-mini" | "fixed";
+  model: RoutedPolicyModel;
   needsEscalation: boolean;
   safetyHold: boolean;
   reasons: string[];
@@ -48,7 +54,7 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     reasons.push("FORCED_PANEL");
     return {
       mode: "PANEL",
-      model: "gpt-5.2",
+      model: MODEL_ROUTES.askAll,
       needsEscalation: true,
       safetyHold: false,
       reasons
@@ -59,7 +65,7 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     reasons.push("FORCED_SUMMARY");
     return {
       mode: "SUMMARY",
-      model: "gpt-5-mini",
+      model: MODEL_ROUTES.summary,
       needsEscalation: false,
       safetyHold: false,
       reasons
@@ -70,7 +76,7 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     reasons.push("PENDING_PANEL");
     return {
       mode: "PANEL",
-      model: "gpt-5.2",
+      model: MODEL_ROUTES.askAll,
       needsEscalation: true,
       safetyHold: false,
       reasons
@@ -81,7 +87,7 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     reasons.push("TRIGGER_PANEL");
     return {
       mode: "PANEL",
-      model: "gpt-5.2",
+      model: MODEL_ROUTES.askAll,
       needsEscalation: true,
       safetyHold: false,
       reasons
@@ -92,14 +98,14 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
     reasons.push("TRIGGER_SUMMARY");
     return {
       mode: "SUMMARY",
-      model: "gpt-5-mini",
+      model: MODEL_ROUTES.summary,
       needsEscalation: false,
       safetyHold: false,
       reasons
     };
   }
 
-  let model: ModelPolicyResult["model"] = "gpt-5.1";
+  let model: ModelPolicyResult["model"] = MODEL_ROUTES.single;
   let needsEscalation = false;
 
   if ((input.tokenEstimate ?? 0) >= 850) {
@@ -145,7 +151,7 @@ export function resolveModelPolicy(input: ModelPolicyInput): ModelPolicyResult {
   }
 
   if (needsEscalation) {
-    model = "gpt-5.2";
+    model = MODEL_ROUTES.singleEscalated;
   }
 
   return {

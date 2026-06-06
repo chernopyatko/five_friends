@@ -7,3 +7,5 @@ dist/
 *.log
 data/*.sqlite
 data/*.sqlite-*
+GOOGLE_ADS_KEYWORDS.md
+LANDING_COPY.md

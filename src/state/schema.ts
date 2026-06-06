@@ -59,6 +59,12 @@ export function initSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS users_inviter_user_id_idx
       ON users(inviter_user_id);
 
+    CREATE TABLE IF NOT EXISTS user_state (
+      user_id TEXT PRIMARY KEY,
+      first_panel_seen_at INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS event_daily (
       date TEXT NOT NULL,
       event TEXT NOT NULL,
@@ -96,6 +102,8 @@ export function initSchema(db: Database): void {
 export function migrateSchema(db: Database): void {
   runIdempotentAlter(db, "ALTER TABLE user_balance ADD COLUMN last_reminder_sent_at INTEGER");
   runIdempotentAlter(db, "ALTER TABLE user_balance ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 1");
+  runIdempotentAlter(db, "ALTER TABLE users ADD COLUMN source TEXT");
+  runIdempotentAlter(db, "ALTER TABLE users ADD COLUMN campaign TEXT");
 }
 
 function runIdempotentAlter(db: Database, sql: string): void {

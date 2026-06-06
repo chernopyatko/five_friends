@@ -8,9 +8,10 @@ import { resolveMessageCost } from "../billing/costs.js";
 import { buildShareLink } from "../growth/share.js";
 import type { ReferralService } from "../growth/referral.js";
 import type { AnalyticsEventName, AnalyticsService } from "../observability/analytics.js";
-import { paywallKeyboard, shareKeyboard } from "./keyboard.js";
+import { classifySafety, getCrisisResponder, getSafetyCheck } from "../security/safety.js";
+import { paywallKeyboard, safetyHoldKeyboard, safetyKeyboard, shareKeyboard } from "./keyboard.js";
 
-const PAYWALL_TEXT =
+export const PAYWALL_TEXT =
   "Друзья на паузе ☕\n\n" +
   "Бесплатные разговоры закончились. Пополни баланс, чтобы продолжить — ребята ждут.";
 const GRACE_TEXT =
@@ -27,6 +28,11 @@ export interface LLMResponder {
   resetSession?(input: { userId: string; previousSessionId: string; newSessionId: string }): Promise<void> | void;
 }
 
+interface FirstPanelStateStore {
+  hasSeenFirstPanel(userId: string): boolean;
+  markFirstPanelSeen(userId: string, at?: number): boolean;
+}
+
 export class BotRuntime {
   private readonly handlers: UXHandlers;
   private readonly responder?: LLMResponder;
@@ -38,6 +44,7 @@ export class BotRuntime {
   private readonly bypassBalanceUserIds: Set<string>;
   private readonly billingConfig?: BillingConfig;
   private readonly billingConfigured: boolean;
+  private readonly firstPanelStateStore?: FirstPanelStateStore;
   private readonly userQueues = new Map<string, Promise<HandleResult>>();
 
   constructor(
@@ -49,6 +56,7 @@ export class BotRuntime {
       botUsername?: string;
       logger?: PinoLogger;
       balanceStore?: BalanceStore;
+      firstPanelStateStore?: FirstPanelStateStore;
       bypassBalanceUserIds?: Set<string>;
       billingConfig?: BillingConfig;
     }
@@ -60,6 +68,7 @@ export class BotRuntime {
     this.botUsername = options?.botUsername;
     this.logger = options?.logger;
     this.balanceStore = options?.balanceStore;
+    this.firstPanelStateStore = options?.firstPanelStateStore;
     this.bypassBalanceUserIds = options?.bypassBalanceUserIds ?? new Set<string>();
     this.billingConfig = options?.billingConfig;
     this.billingConfigured = options?.billingConfig?.isConfigured ?? false;
@@ -111,11 +120,44 @@ export class BotRuntime {
       const cost = resolveMessageCost(result.llmTask.mode);
       const balance = this.balanceStore.getBalance(event.userId);
       if (balance < cost) {
+        const paywallSafety = classifySafety(result.llmTask.userText);
+        if (paywallSafety === "hard") {
+          result.state.safetyHold = true;
+          this.analytics?.emitEvent({
+            event: "safety_triggered",
+            userId: event.userId,
+            sessionId: result.state.sessionId
+          });
+          const crisis = getCrisisResponder();
+          return {
+            ...result,
+            messages: [{ text: crisis.text, keyboard: safetyHoldKeyboard() }]
+          };
+        }
+        if (paywallSafety === "soft") {
+          this.analytics?.emitEvent({
+            event: "safety_triggered",
+            userId: event.userId,
+            sessionId: result.state.sessionId
+          });
+          const soft = getSafetyCheck();
+          return {
+            ...result,
+            messages: [{ text: soft.text, keyboard: safetyKeyboard() }]
+          };
+        }
         this.analytics?.emitEvent({
           event: "paywall_shown",
           userId: event.userId,
           sessionId: result.state.sessionId
         });
+        if (this.firstPanelStateStore && !this.firstPanelStateStore.hasSeenFirstPanel(event.userId)) {
+          this.analytics?.emitEvent({
+            event: "paywall_before_first_panel",
+            userId: event.userId,
+            sessionId: result.state.sessionId
+          });
+        }
         return {
           ...result,
           messages: [{
@@ -144,15 +186,24 @@ export class BotRuntime {
       }
 
       const mergedMessages = mergeMessagesWithGenerated(result.messages, generatedMessages, result.llmTask.mode);
-      if (generation.billable && !result.llmTask.forceFree) {
-        const postGenerationEvent = resolvePostGenerationEvent(result.llmTask);
-        if (postGenerationEvent) {
+      const postGenerationEvent = resolvePostGenerationEvent(result.llmTask);
+      if (generation.billable && postGenerationEvent) {
+        const shouldEmitPostEvent = postGenerationEvent === "ask_all" || !result.llmTask.forceFree;
+        if (shouldEmitPostEvent) {
+          const extra = postGenerationEvent === "ask_all"
+            ? { origin: result.analyticsContext?.askAllOrigin ?? "manual" }
+            : undefined;
           this.analytics?.emitEvent({
             event: postGenerationEvent,
             userId: event.userId,
-            sessionId: result.state.sessionId
+            sessionId: result.state.sessionId,
+            ...(extra ? { extra } : {})
           });
         }
+      }
+
+      if (result.llmTask.mode === "PANEL" && generation.billable) {
+        this.firstPanelStateStore?.markFirstPanelSeen(event.userId);
       }
 
       if (!isBypass && this.balanceStore && generation.billable && this.billingConfig && !result.llmTask.forceFree) {

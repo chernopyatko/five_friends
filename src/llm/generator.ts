@@ -1,4 +1,5 @@
 import type { BotMode } from "./schemas.js";
+import { MODEL_ROUTES, type TextGenerationModel } from "./modelRouting.js";
 
 export interface GeneratorApiClient {
   responses: {
@@ -13,16 +14,16 @@ export interface GeneratorInput {
   escalateSingle?: boolean;
 }
 
-export type GeneratorModel = "gpt-5.1" | "gpt-5.2" | "gpt-5-mini";
+export type GeneratorModel = TextGenerationModel;
 
 export function selectGeneratorModel(input: { mode: BotMode; escalateSingle?: boolean }): GeneratorModel {
   switch (input.mode) {
     case "PANEL":
-      return "gpt-5.2";
+      return MODEL_ROUTES.askAll;
     case "SUMMARY":
-      return "gpt-5-mini";
+      return MODEL_ROUTES.summary;
     case "SINGLE":
-      return input.escalateSingle ? "gpt-5.2" : "gpt-5.1";
+      return input.escalateSingle ? MODEL_ROUTES.singleEscalated : MODEL_ROUTES.single;
     case "CRISIS":
       throw new Error("CRISIS mode must use fixed response and must not call generator.");
     default:

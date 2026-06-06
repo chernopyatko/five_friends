@@ -4,10 +4,10 @@ import { buildGeneratorRequest, runGenerator, selectGeneratorModel } from "../..
 
 describe("generator", () => {
   it("selects fixed models per mode", () => {
-    expect(selectGeneratorModel({ mode: "PANEL" })).toBe("gpt-5.2");
+    expect(selectGeneratorModel({ mode: "PANEL" })).toBe("gpt-5.5");
     expect(selectGeneratorModel({ mode: "SUMMARY" })).toBe("gpt-5-mini");
-    expect(selectGeneratorModel({ mode: "SINGLE", escalateSingle: false })).toBe("gpt-5.1");
-    expect(selectGeneratorModel({ mode: "SINGLE", escalateSingle: true })).toBe("gpt-5.2");
+    expect(selectGeneratorModel({ mode: "SINGLE", escalateSingle: false })).toBe("gpt-5.4");
+    expect(selectGeneratorModel({ mode: "SINGLE", escalateSingle: true })).toBe("gpt-5.5");
   });
 
   it("throws when CRISIS is passed to generator", () => {
@@ -20,7 +20,7 @@ describe("generator", () => {
       instructions: "instr",
       userText: "hello"
     });
-    expect(request.model).toBe("gpt-5.1");
+    expect(request.model).toBe("gpt-5.4");
     expect(request.instructions).toBe("instr");
     expect(request.reasoning).toEqual({ effort: "high" });
   });
@@ -40,7 +40,7 @@ describe("generator", () => {
       userText: "test"
     });
 
-    expect(result.model).toBe("gpt-5.1");
+    expect(result.model).toBe("gpt-5.4");
     expect(result.text).toBe("готово");
   });
 });

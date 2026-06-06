@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import { resolveModelPolicy } from "../../src/policy/modelPolicy.js";
 
 describe("modelPolicy", () => {
-  it("routes pending panel state to PANEL on gpt-5.2", () => {
+  it("routes pending panel state to PANEL on gpt-5.5", () => {
     const result = resolveModelPolicy({
       userText: "любой текст",
       state: { pendingMode: "awaiting_panel_input" }
     });
 
     expect(result.mode).toBe("PANEL");
-    expect(result.model).toBe("gpt-5.2");
+    expect(result.model).toBe("gpt-5.5");
   });
 
-  it("routes forced panel mode to PANEL on gpt-5.2", () => {
+  it("routes forced panel mode to PANEL on gpt-5.5", () => {
     const result = resolveModelPolicy({
       userText: "любой текст",
       state: { pendingMode: null },
@@ -21,7 +21,7 @@ describe("modelPolicy", () => {
     });
 
     expect(result.mode).toBe("PANEL");
-    expect(result.model).toBe("gpt-5.2");
+    expect(result.model).toBe("gpt-5.5");
   });
 
   it("routes forced summary mode to SUMMARY on gpt-5-mini", () => {
@@ -55,7 +55,7 @@ describe("modelPolicy", () => {
     expect(result.model).toBe("gpt-5-mini");
   });
 
-  it("keeps default SINGLE on gpt-5.1 when no escalation signals", () => {
+  it("keeps default SINGLE on gpt-5.4 when no escalation signals", () => {
     const result = resolveModelPolicy({
       userText: "мне просто грустно сегодня",
       state: { pendingMode: null },
@@ -63,11 +63,11 @@ describe("modelPolicy", () => {
     });
 
     expect(result.mode).toBe("SINGLE");
-    expect(result.model).toBe("gpt-5.1");
+    expect(result.model).toBe("gpt-5.4");
     expect(result.needsEscalation).toBe(false);
   });
 
-  it("escalates SINGLE to gpt-5.2 on high token count", () => {
+  it("escalates SINGLE to gpt-5.5 on high token count", () => {
     const result = resolveModelPolicy({
       userText: "подробно",
       state: { pendingMode: null },
@@ -75,7 +75,7 @@ describe("modelPolicy", () => {
     });
 
     expect(result.mode).toBe("SINGLE");
-    expect(result.model).toBe("gpt-5.2");
+    expect(result.model).toBe("gpt-5.5");
     expect(result.reasons).toContain("TOKENS_HIGH");
   });
 
@@ -94,7 +94,7 @@ describe("modelPolicy", () => {
       }
     });
     expect(panelResult.mode).toBe("PANEL");
-    expect(panelResult.model).toBe("gpt-5.2");
+    expect(panelResult.model).toBe("gpt-5.5");
 
     const singleResult = resolveModelPolicy({
       userText: "хочу понять ситуацию",
@@ -110,7 +110,7 @@ describe("modelPolicy", () => {
       }
     });
     expect(singleResult.mode).toBe("SINGLE");
-    expect(singleResult.model).toBe("gpt-5.2");
+    expect(singleResult.model).toBe("gpt-5.5");
     expect(singleResult.reasons).toContain("LOW_CONF");
   });
 
@@ -121,7 +121,7 @@ describe("modelPolicy", () => {
     });
 
     expect(result.mode).toBe("PANEL");
-    expect(result.model).toBe("gpt-5.2");
+    expect(result.model).toBe("gpt-5.5");
   });
 
   it("forces CRISIS fixed response on hard safety", () => {

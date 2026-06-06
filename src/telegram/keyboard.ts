@@ -33,9 +33,7 @@ export function startKeyboard(): InlineKeyboard {
 
 export function coldStartKeyboard(): InlineKeyboard {
   return [
-    [{ text: "🤯 Есть ситуация — нужен взгляд со стороны", data: "cs_situation" }],
-    [{ text: "💬 Сложное сообщение — помоги ответить или написать", data: "cs_message" }],
-    [{ text: "🙂 Просто хочу поболтать", data: "cs_chat" }]
+    [{ text: "Не знаю с чего начать", data: "cs_help_start" }]
   ];
 }
 
@@ -84,6 +82,13 @@ export function friendsKeyboard(): InlineKeyboard {
     ],
     [{ text: "🚀 Спросить всех", data: "panel_start" }]
   ];
+}
+
+export function conversationInputKeyboard(): InlineKeyboard {
+  return [[
+    { text: "✅ Готово", data: "conversation_done" },
+    { text: "🗑 Отмена", data: "conversation_cancel" }
+  ]];
 }
 
 export function panelAfterKeyboard(): InlineKeyboard {

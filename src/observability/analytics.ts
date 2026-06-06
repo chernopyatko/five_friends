@@ -7,6 +7,7 @@ import { hashUserId } from "../utils/hashUserId.js";
 
 export type AnalyticsEventName =
   | "start"
+  | "cold_start_click"
   | "choose_persona"
   | "ask_all"
   | "tool_write_for_me"
@@ -16,6 +17,7 @@ export type AnalyticsEventName =
   | "model_error"
   | "safety_triggered"
   | "paywall_shown"
+  | "paywall_before_first_panel"
   | "purchase_completed";
 
 type EventExtraValue = string | number | boolean | null | undefined;
