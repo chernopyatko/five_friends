@@ -51,7 +51,7 @@ export function coldStartChatKeyboard(): InlineKeyboard {
       { text: "❤️ Наташа — поддержит и поймёт", data: "cs_chat_natasha" }
     ],
     [
-      { text: "🌀 Аня — задаст точный вопрос", data: "cs_chat_anya" },
+      { text: "🌀 Аня — поможет понять важное", data: "cs_chat_anya" },
       { text: "🎯 Макс — скажет как есть", data: "cs_chat_max" }
     ]
   ];

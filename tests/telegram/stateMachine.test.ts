@@ -211,9 +211,11 @@ describe("stateMachine", () => {
       command: "/start"
     });
 
-    expect(result.messages[0]?.text).toContain("Привет 👋 Мы на связи.");
-    expect(result.messages[0]?.text).toContain("🧠 Ян: Рассказывай");
-    expect(result.messages[0]?.text).toContain("🎯 Макс: Короче, выкладывай.");
+    expect(result.messages[0]?.text).toContain("Круг друзей — это 4 ИИ-друга");
+    expect(result.messages[0]?.text).toContain("для сложных переписок, конфликтов и решений");
+    expect(result.messages[0]?.text).toContain("🧠 Ян — разложит факты и даст шаги");
+    expect(result.messages[0]?.text).toContain("🌀 Аня — поможет понять, что для тебя важно");
+    expect(result.messages[0]?.text).toContain("Первый раз можешь просто кинуть переписку");
     expect(result.state.pendingMode).toBe("awaiting_panel_input");
     expect(result.state.pendingPanelScenario).toBeNull();
     expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Спросить всех");
@@ -1114,7 +1116,7 @@ describe("stateMachine", () => {
       command: "/start",
       commandPayload: `ref_${refCode}`
     });
-    expect(first.messages[0]?.text).toContain("Привет 👋 Мы на связи.");
+    expect(first.messages[0]?.text).toContain("Круг друзей — это 4 ИИ-друга");
 
     const second = handlers.handleEvent({
       updateId: 4,
@@ -1122,7 +1124,7 @@ describe("stateMachine", () => {
       command: "/start",
       commandPayload: `ref_${refCode}`
     });
-    expect(second.messages[0]?.text).toContain("Привет 👋 Мы на связи.");
+    expect(second.messages[0]?.text).toContain("Круг друзей — это 4 ИИ-друга");
   });
 
   it("stores ad source only once and allows late attribution from null source", () => {
