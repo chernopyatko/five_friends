@@ -63,11 +63,19 @@ function finishConversation(handlers: UXHandlers, userId: string, updateId: numb
 }
 
 describe("stateMachine", () => {
-  it("collects a forwarded message pack before asking who should answer", () => {
+  it("collects a message pack only after explicit collection mode", () => {
     const handlers = new UXHandlers();
     const userId = "u-forward-pack";
-    let result = handlers.handleEvent({
+    const started = handlers.handleEvent({
       updateId: 1,
+      userId,
+      text: "📎 Собрать переписку",
+      now: 1000
+    });
+    expect(started.state.pendingMode).toBe("awaiting_collection_input");
+
+    let result = handlers.handleEvent({
+      updateId: 2,
       userId,
       text: "Форвард 1: привет",
       now: 1000
@@ -79,7 +87,7 @@ describe("stateMachine", () => {
 
     for (let i = 2; i <= 12; i += 1) {
       result = handlers.handleEvent({
-        updateId: i,
+        updateId: i + 1,
         userId,
         text: `Форвард ${i}: часть переписки`,
         now: 1000
@@ -91,29 +99,18 @@ describe("stateMachine", () => {
     }
 
     const done = handlers.handleEvent({
-      updateId: 13,
+      updateId: 14,
       userId,
       callbackData: "conversation_done",
       now: 1000
     });
 
-    expect(done.llmTask).toBeUndefined();
-    expect(done.messages[0]?.text).toContain("Кого позвать");
-
-    const withPersona = handlers.handleEvent({
-      updateId: 14,
-      userId,
-      callbackData: "choose_friend:yan",
-      now: 1000
-    });
-
-    expect(withPersona.llmTask?.mode).toBe("SINGLE");
-    expect(withPersona.llmTask?.persona).toBe("yan");
-    expect(withPersona.llmTask?.userText).toContain("Форвард 1: привет");
-    expect(withPersona.llmTask?.userText).toContain("Форвард 12: часть переписки");
+    expect(done.llmTask?.mode).toBe("PANEL");
+    expect(done.llmTask?.userText).toContain("Форвард 1: привет");
+    expect(done.llmTask?.userText).toContain("Форвард 12: часть переписки");
   });
 
-  it("collects forwarded messages even when a friend is already selected", () => {
+  it("collects messages via explicit collection even when a friend is already selected", () => {
     const handlers = new UXHandlers();
     const userId = "u-forward-with-persona";
     handlers.handleEvent({
@@ -123,8 +120,16 @@ describe("stateMachine", () => {
       now: 0
     });
 
-    const first = handlers.handleEvent({
+    const started = handlers.handleEvent({
       updateId: 2,
+      userId,
+      text: "📎 Собрать переписку",
+      now: 1000
+    });
+    expect(started.state.pendingMode).toBe("awaiting_collection_input");
+
+    const first = handlers.handleEvent({
+      updateId: 3,
       userId,
       text: "Переслано 1: привет",
       isForwarded: true,
@@ -134,7 +139,7 @@ describe("stateMachine", () => {
     expect(first.messages[0]?.text).toContain("Принял 1");
 
     const second = handlers.handleEvent({
-      updateId: 3,
+      updateId: 4,
       userId,
       text: "Переслано 2: а почему ты молчишь?",
       isForwarded: true,
@@ -143,23 +148,22 @@ describe("stateMachine", () => {
     expect(second.llmTask).toBeUndefined();
     expect(second.messages[0]?.text).toContain("Принял 2");
 
-    const done = finishConversation(handlers, userId, 4);
-    expect(done.llmTask?.mode).toBe("SINGLE");
-    expect(done.llmTask?.persona).toBe("max");
+    const done = finishConversation(handlers, userId, 5);
+    expect(done.llmTask?.mode).toBe("PANEL");
     expect(done.llmTask?.userText).toContain("Переслано 1: привет");
     expect(done.llmTask?.userText).toContain("Переслано 2: а почему ты молчишь?");
   });
 
-  it("collects panel input fragments and runs ask-all only after Done", () => {
+  it("collects panel input fragments and runs ask-all only after Done in collection mode", () => {
     const { handlers } = createGrowthHarness();
     const userId = "u-panel-pack";
 
     const pending = handlers.handleEvent({
       updateId: 1,
       userId,
-      callbackData: "cs_situation"
+      text: "📎 Собрать переписку"
     });
-    expect(pending.state.pendingMode).toBe("awaiting_panel_input");
+    expect(pending.state.pendingMode).toBe("awaiting_collection_input");
 
     const first = handlers.handleEvent({
       updateId: 2,
@@ -189,7 +193,114 @@ describe("stateMachine", () => {
     expect(done.llmTask?.userText).toContain("Второй кусок: он потом прислал голосовое");
   });
 
-  it("collects pending text when no friend selected", () => {
+  it("preserves compose scenario when collection starts from one-shot tool", () => {
+    const handlers = new UXHandlers();
+    const userId = "u-compose-collection";
+
+    const compose = handlers.handleEvent({
+      updateId: 1,
+      userId,
+      text: "Напиши за меня"
+    });
+    expect(compose.state.pendingMode).toBe("awaiting_panel_input");
+    expect(compose.state.pendingPanelScenario).toBe("compose");
+
+    const collection = handlers.handleEvent({
+      updateId: 2,
+      userId,
+      text: "📎 Собрать переписку"
+    });
+    expect(collection.state.pendingMode).toBe("awaiting_collection_input");
+    expect(collection.state.pendingPanelScenario).toBe("compose");
+
+    handlers.handleEvent({
+      updateId: 3,
+      userId,
+      text: "Контекст: клиент злится из-за переноса срока."
+    });
+    handlers.handleEvent({
+      updateId: 4,
+      userId,
+      text: "Нужно написать спокойно и без оправданий."
+    });
+
+    const done = handlers.handleEvent({
+      updateId: 5,
+      userId,
+      callbackData: "conversation_done"
+    });
+    expect(done.llmTask?.mode).toBe("PANEL");
+    expect(done.llmTask?.scenario).toBe("compose");
+    expect(done.llmTask?.userText).toContain("клиент злится");
+    expect(done.llmTask?.userText).toContain("без оправданий");
+  });
+
+  it("treats friend names as fragments while collection mode is active", () => {
+    const handlers = new UXHandlers();
+    const userId = "u-collection-name-fragment";
+
+    handlers.handleEvent({
+      updateId: 1,
+      userId,
+      text: "📎 Собрать переписку"
+    });
+    handlers.handleEvent({
+      updateId: 2,
+      userId,
+      text: "Первый фрагмент переписки"
+    });
+    const nameFragment = handlers.handleEvent({
+      updateId: 3,
+      userId,
+      text: "Аня,"
+    });
+
+    expect(nameFragment.llmTask).toBeUndefined();
+    expect(nameFragment.state.currentPersona).toBeNull();
+    expect(nameFragment.state.pendingMode).toBe("awaiting_collection_input");
+    expect(nameFragment.messages[0]?.text).toContain("Принял 2");
+
+    const done = handlers.handleEvent({
+      updateId: 4,
+      userId,
+      callbackData: "conversation_done"
+    });
+    expect(done.llmTask?.mode).toBe("PANEL");
+    expect(done.llmTask?.userText).toContain("Первый фрагмент переписки");
+    expect(done.llmTask?.userText).toContain("Аня");
+  });
+
+  it("keeps an oversized first collection fragment by truncating it", () => {
+    const handlers = new UXHandlers();
+    const userId = "u-huge-first-fragment";
+    const hugeText = `Начало ${"x".repeat(30_000)} Конец`;
+
+    handlers.handleEvent({
+      updateId: 1,
+      userId,
+      text: "📎 Собрать переписку"
+    });
+    const collected = handlers.handleEvent({
+      updateId: 2,
+      userId,
+      text: hugeText
+    });
+
+    expect(collected.llmTask).toBeUndefined();
+    expect(collected.messages[0]?.text).toContain("взял первые");
+    expect(collected.state.pendingConversationParts).toHaveLength(1);
+
+    const done = handlers.handleEvent({
+      updateId: 3,
+      userId,
+      callbackData: "conversation_done"
+    });
+    expect(done.llmTask?.mode).toBe("PANEL");
+    expect(done.llmTask?.userText).toContain("Начало");
+    expect(done.llmTask?.userText.length).toBeLessThanOrEqual(24_000);
+  });
+
+  it("runs anonymous text as ask-all immediately when no friend selected", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -197,10 +308,11 @@ describe("stateMachine", () => {
       text: "привет"
     });
 
-    expect(result.messages[0]?.text).toContain("Принял 1");
-    expect(result.messages[0]?.text).not.toContain("Кого позвать");
+    expect(result.messages[0]?.text).toContain("Собираю разбор");
+    expect(result.llmTask?.mode).toBe("PANEL");
+    expect(result.llmTask?.userText).toBe("привет");
     expect(result.state.pendingUserText).toBeNull();
-    expect(result.state.pendingConversationParts).toEqual([{ source: "text", text: "привет" }]);
+    expect(result.state.pendingConversationParts).toEqual([]);
   });
 
   it("sets cold start text, inline keyboard and persistent main menu on /start", () => {
@@ -215,17 +327,17 @@ describe("stateMachine", () => {
     expect(result.messages[0]?.text).toContain("для сложных переписок, конфликтов и решений");
     expect(result.messages[0]?.text).toContain("🧠 Ян — разложит факты и даст шаги");
     expect(result.messages[0]?.text).toContain("🌀 Аня — поможет понять, что для тебя важно");
-    expect(result.messages[0]?.text).toContain("Первый раз можешь просто кинуть переписку");
-    expect(result.state.pendingMode).toBe("awaiting_panel_input");
+    expect(result.messages[0]?.text).toContain("Для пачки сообщений нажми «📎 Собрать переписку»");
+    expect(result.state.pendingMode).toBeNull();
     expect(result.state.pendingPanelScenario).toBeNull();
     expect(result.messages[0]?.replyKeyboard?.[0]?.[0]).toBe("🚀 Спросить всех");
-    expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("👥 Друзья");
-    expect(result.messages[0]?.replyKeyboard?.[2]?.[0]).toBe("📋 Итоги");
+    expect(result.messages[0]?.replyKeyboard?.[0]?.[1]).toBe("📎 Собрать переписку");
+    expect(result.messages[0]?.replyKeyboard?.[2]?.[0]).toBe("👥 Друзья");
     const helpStart = result.messages[0]?.keyboard?.[0]?.[0];
     expect(helpStart && "data" in helpStart ? helpStart.data : null).toBe("cs_help_start");
   });
 
-  it("runs first text after /start as forceFree panel after Done", () => {
+  it("runs first text after /start as forceFree panel immediately", () => {
     const { handlers } = createGrowthHarness();
     const start = handlers.handleEvent({
       updateId: 1,
@@ -239,13 +351,10 @@ describe("stateMachine", () => {
       userId: "u-start-panel",
       text: "Он написал: «я не уверен, что хочу продолжать». Что ответить?"
     });
-    expect(run.llmTask).toBeUndefined();
-
-    const done = finishConversation(handlers, "u-start-panel", 3);
-
-    expect(done.llmTask?.mode).toBe("PANEL");
-    expect(done.llmTask?.forceFree).toBe(true);
-    expect(done.analyticsContext?.askAllOrigin).toBe("auto_cs_situation");
+    expect(run.llmTask?.mode).toBe("PANEL");
+    expect(run.llmTask?.forceFree).toBe(true);
+    expect(run.analyticsContext?.askAllOrigin).toBe("auto_cs_situation");
+    expect(run.state.pendingAutoPanelFromColdStart).toBe(false);
   });
 
   it("treats /friends as alias to /help", () => {
@@ -259,9 +368,11 @@ describe("stateMachine", () => {
     expect(result.messages[0]?.text).toContain("❓ Как тут всё устроено");
   });
 
-  it("processes pending text after friend selection", () => {
+  it("does not replay already handled anonymous ask-all text after friend selection", () => {
     const handlers = new UXHandlers();
-    handlers.handleEvent({ updateId: 1, userId: "u1", text: "нужна поддержка" });
+    const first = handlers.handleEvent({ updateId: 1, userId: "u1", text: "нужна поддержка" });
+    expect(first.llmTask?.mode).toBe("PANEL");
+
     const result = handlers.handleEvent({
       updateId: 2,
       userId: "u1",
@@ -271,9 +382,7 @@ describe("stateMachine", () => {
     expect(result.messages.length).toBeGreaterThanOrEqual(1);
     expect(result.messages[0]?.text).toContain("Сейчас с тобой Ян");
     expect(result.state.pendingUserText).toBeNull();
-    expect(result.llmTask).toBeDefined();
-    expect(result.llmTask?.mode).toBe("SINGLE");
-    expect(result.llmTask?.userText).toContain("нужна поддержка");
+    expect(result.llmTask).toBeUndefined();
   });
 
   it("rejects duplicate updates by idempotency rule", () => {
@@ -305,20 +414,38 @@ describe("stateMachine", () => {
     expect(balanceStore.getRemindersEnabled(userId)).toBe(true);
   });
 
+  it("explains free current version when billing is disabled", () => {
+    const handlers = new UXHandlers();
+
+    const balance = handlers.handleEvent({
+      updateId: 1,
+      userId: "u-free-billing",
+      command: "/balance"
+    });
+    expect(balance.messages[0]?.text).toContain("В текущей версии");
+    expect(balance.messages[0]?.text).toContain("можно пользоваться бесплатно");
+    expect(balance.messages[0]?.text).toContain("может измениться");
+
+    const premium = handlers.handleEvent({
+      updateId: 2,
+      userId: "u-free-billing",
+      text: "⭐ Премиум"
+    });
+    expect(premium.messages[0]?.text).toBe(balance.messages[0]?.text);
+  });
+
   it("handles panel pending flow", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({ updateId: 1, userId: "u1", callbackData: "choose_friend:anya" });
     handlers.handleEvent({ updateId: 2, userId: "u1", text: "все сразу" });
-    const collected = handlers.handleEvent({ updateId: 3, userId: "u1", text: "ситуация" });
-    expect(collected.llmTask).toBeUndefined();
+    const result = handlers.handleEvent({ updateId: 3, userId: "u1", text: "ситуация" });
 
-    const result = finishConversation(handlers, "u1", 4);
-
+    expect(result.llmTask?.mode).toBe("PANEL");
     expect(result.messages[0]?.text).toContain("Собираю разбор от всех друзей");
     expect(result.state.pendingMode).toBeNull();
   });
 
-  it("sets panel pending mode via cs_situation callback", () => {
+  it("sets single ask-all pending mode via cs_situation callback", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
       updateId: 1,
@@ -329,9 +456,10 @@ describe("stateMachine", () => {
     expect(result.state.pendingMode).toBe("awaiting_panel_input");
     expect(result.state.pendingPanelScenario).toBeNull();
     expect(result.messages[0]?.text).toContain("Расскажи что случилось");
+    expect(result.messages[0]?.text).not.toContain("Готово");
   });
 
-  it("runs first cs_situation panel as forceFree with auto origin after Done", () => {
+  it("runs first cs_situation panel as forceFree with auto origin immediately", () => {
     const { handlers } = createGrowthHarness();
 
     const pending = handlers.handleEvent({
@@ -346,14 +474,10 @@ describe("stateMachine", () => {
       userId: "u-auto-panel",
       text: "Мы с партнером снова поссорились и не разговариваем."
     });
-    expect(run.llmTask).toBeUndefined();
-
-    const done = finishConversation(handlers, "u-auto-panel", 3);
-
-    expect(done.llmTask?.mode).toBe("PANEL");
-    expect(done.llmTask?.forceFree).toBe(true);
-    expect(done.analyticsContext?.askAllOrigin).toBe("auto_cs_situation");
-    expect(done.state.pendingAutoPanelFromColdStart).toBe(false);
+    expect(run.llmTask?.mode).toBe("PANEL");
+    expect(run.llmTask?.forceFree).toBe(true);
+    expect(run.analyticsContext?.askAllOrigin).toBe("auto_cs_situation");
+    expect(run.state.pendingAutoPanelFromColdStart).toBe(false);
   });
 
   it("disables auto cs_situation panel after first panel has been marked", () => {
@@ -372,13 +496,9 @@ describe("stateMachine", () => {
       userId: "u-seen",
       text: "Хочу обсудить конфликт на работе."
     });
-    expect(run.llmTask).toBeUndefined();
-
-    const done = finishConversation(handlers, "u-seen", 3);
-
-    expect(done.llmTask?.mode).toBe("PANEL");
-    expect(done.llmTask?.forceFree).toBeUndefined();
-    expect(done.analyticsContext?.askAllOrigin).toBe("manual");
+    expect(run.llmTask?.mode).toBe("PANEL");
+    expect(run.llmTask?.forceFree).toBeUndefined();
+    expect(run.analyticsContext?.askAllOrigin).toBe("manual");
   });
 
   it("opens message submenu via cs_message callback", () => {
@@ -397,7 +517,7 @@ describe("stateMachine", () => {
     expect(reply && "data" in reply ? reply.data : null).toBe("cs_reply");
   });
 
-  it("starts compose panel from cs_compose without friend selection", () => {
+  it("starts one-shot compose panel from cs_compose without friend selection", () => {
     const { handlers } = createGrowthHarness();
     const pending = handlers.handleEvent({
       updateId: 1,
@@ -409,22 +529,21 @@ describe("stateMachine", () => {
     expect(pending.state.pendingPanelScenario).toBe("compose");
     expect(pending.state.pendingAutoPanelFromColdStart).toBe(true);
     expect(pending.messages[0]?.text).toContain("Опиши, кому и что нужно написать");
+    expect(pending.messages[0]?.text).not.toContain("Готово");
 
     const run = handlers.handleEvent({
       updateId: 2,
       userId: "u-cs-compose-no-persona",
       text: "Напиши бывшему, что я не хочу ругаться."
     });
-    expect(run.llmTask).toBeUndefined();
 
-    const done = finishConversation(handlers, "u-cs-compose-no-persona", 3);
-
-    expect(done.llmTask?.mode).toBe("PANEL");
-    expect(done.llmTask?.scenario).toBe("compose");
-    expect(done.llmTask?.forceFree).toBe(true);
+    expect(run.llmTask?.mode).toBe("PANEL");
+    expect(run.llmTask?.scenario).toBe("compose");
+    expect(run.llmTask?.forceFree).toBe(true);
+    expect(run.state.pendingMode).toBeNull();
   });
 
-  it("starts compose panel from cs_compose when friend already selected", () => {
+  it("starts one-shot compose with selected friend from cs_compose", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({
       updateId: 1,
@@ -438,12 +557,22 @@ describe("stateMachine", () => {
       callbackData: "cs_compose"
     });
 
-    expect(withPersona.state.pendingMode).toBe("awaiting_panel_input");
-    expect(withPersona.state.pendingPanelScenario).toBe("compose");
+    expect(withPersona.state.pendingMode).toBe("awaiting_compose_input");
+    expect(withPersona.state.pendingPanelScenario).toBeNull();
     expect(withPersona.messages[0]?.text).toContain("Опиши, кому и что нужно написать");
+    expect(withPersona.messages[0]?.text).not.toContain("Готово");
+
+    const run = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-cs-compose-persona",
+      text: "Напиши коллеге, что встречу надо перенести."
+    });
+    expect(run.llmTask?.mode).toBe("SINGLE");
+    expect(run.llmTask?.persona).toBe("yan");
+    expect(run.llmTask?.scenario).toBe("compose");
   });
 
-  it("starts reply panel from cs_reply without friend selection", () => {
+  it("starts one-shot reply panel from cs_reply without friend selection", () => {
     const { handlers } = createGrowthHarness();
     const pending = handlers.handleEvent({
       updateId: 1,
@@ -455,22 +584,21 @@ describe("stateMachine", () => {
     expect(pending.state.pendingPanelScenario).toBe("reply");
     expect(pending.state.pendingAutoPanelFromColdStart).toBe(true);
     expect(pending.messages[0]?.text).toContain("Вставь сообщение, на которое нужно ответить");
+    expect(pending.messages[0]?.text).not.toContain("Готово");
 
     const run = handlers.handleEvent({
       updateId: 2,
       userId: "u-cs-reply-no-persona",
       text: "Он написал: «ты слишком драматизируешь»."
     });
-    expect(run.llmTask).toBeUndefined();
 
-    const done = finishConversation(handlers, "u-cs-reply-no-persona", 3);
-
-    expect(done.llmTask?.mode).toBe("PANEL");
-    expect(done.llmTask?.scenario).toBe("reply");
-    expect(done.llmTask?.forceFree).toBe(true);
+    expect(run.llmTask?.mode).toBe("PANEL");
+    expect(run.llmTask?.scenario).toBe("reply");
+    expect(run.llmTask?.forceFree).toBe(true);
+    expect(run.state.pendingMode).toBeNull();
   });
 
-  it("starts reply panel from cs_reply when friend already selected", () => {
+  it("starts one-shot reply with selected friend from cs_reply", () => {
     const handlers = new UXHandlers();
     handlers.handleEvent({
       updateId: 1,
@@ -484,9 +612,19 @@ describe("stateMachine", () => {
       callbackData: "cs_reply"
     });
 
-    expect(withPersona.state.pendingMode).toBe("awaiting_panel_input");
-    expect(withPersona.state.pendingPanelScenario).toBe("reply");
+    expect(withPersona.state.pendingMode).toBe("awaiting_reply_input");
+    expect(withPersona.state.pendingPanelScenario).toBeNull();
     expect(withPersona.messages[0]?.text).toContain("Вставь сообщение, на которое нужно ответить");
+    expect(withPersona.messages[0]?.text).not.toContain("Готово");
+
+    const run = handlers.handleEvent({
+      updateId: 3,
+      userId: "u-cs-reply-persona",
+      text: "Он написал: «ты опять пропал»."
+    });
+    expect(run.llmTask?.mode).toBe("SINGLE");
+    expect(run.llmTask?.persona).toBe("max");
+    expect(run.llmTask?.scenario).toBe("reply");
   });
 
   it("opens chat friend picker via cs_chat callback", () => {
@@ -560,7 +698,7 @@ describe("stateMachine", () => {
     });
 
     expect(result.state.pendingMode).toBe("awaiting_panel_input");
-    expect(result.messages[0]?.text).toContain("Кидай ситуацию, переписку");
+    expect(result.messages[0]?.text).toContain("Кидай одну ситуацию");
   });
 
   it("routes Inna to summary even when panel input is pending", () => {
@@ -685,14 +823,11 @@ describe("stateMachine", () => {
     });
     expect(pending.state.pendingMode).toBe("awaiting_compose_input");
 
-    const collected = handlers.handleEvent({
+    const run = handlers.handleEvent({
       updateId: 3,
       userId: "u-compose",
       text: "Нужно написать маме, что не приеду на выходных."
     });
-    expect(collected.llmTask).toBeUndefined();
-
-    const run = finishConversation(handlers, "u-compose", 4);
     expect(run.llmTask?.mode).toBe("SINGLE");
     expect(run.llmTask?.persona).toBe("yan");
     expect(run.llmTask?.scenario).toBe("compose");
@@ -723,14 +858,11 @@ describe("stateMachine", () => {
     expect(switched.llmTask).toBeUndefined();
     expect(switched.messages[0]?.text).toContain("Переключил");
 
-    const replyCollected = handlers.handleEvent({
+    const runReply = handlers.handleEvent({
       updateId: 4,
       userId: "u-compose-to-reply",
       text: "Она пишет: \"ты меня игнорируешь\"."
     });
-    expect(replyCollected.llmTask).toBeUndefined();
-
-    const runReply = finishConversation(handlers, "u-compose-to-reply", 5);
     expect(runReply.llmTask?.mode).toBe("SINGLE");
     expect(runReply.llmTask?.persona).toBe("yan");
     expect(runReply.llmTask?.scenario).toBe("reply");
@@ -761,14 +893,11 @@ describe("stateMachine", () => {
     expect(switched.llmTask).toBeUndefined();
     expect(switched.messages[0]?.text).toContain("Переключил");
 
-    const composeCollected = handlers.handleEvent({
+    const runCompose = handlers.handleEvent({
       updateId: 4,
       userId: "u-reply-to-compose",
       text: "Напиши менеджеру, что дедлайн сдвигается на два дня."
     });
-    expect(composeCollected.llmTask).toBeUndefined();
-
-    const runCompose = finishConversation(handlers, "u-reply-to-compose", 5);
     expect(runCompose.llmTask?.mode).toBe("SINGLE");
     expect(runCompose.llmTask?.persona).toBe("max");
     expect(runCompose.llmTask?.scenario).toBe("compose");
@@ -804,13 +933,10 @@ describe("stateMachine", () => {
       userId: "u-reply-to-panel",
       text: "Он пишет: «ты опять пропал, мне это не ок»."
     });
-    expect(panelReplyCollected.llmTask).toBeUndefined();
-
-    const runPanelReply = finishConversation(handlers, "u-reply-to-panel", 5);
-    expect(runPanelReply.llmTask?.mode).toBe("PANEL");
-    expect(runPanelReply.llmTask?.scenario).toBe("reply");
-    expect(runPanelReply.state.pendingMode).toBeNull();
-    expect(runPanelReply.state.pendingPanelScenario).toBeNull();
+    expect(panelReplyCollected.llmTask?.mode).toBe("PANEL");
+    expect(panelReplyCollected.llmTask?.scenario).toBe("reply");
+    expect(panelReplyCollected.state.pendingMode).toBeNull();
+    expect(panelReplyCollected.state.pendingPanelScenario).toBeNull();
   });
 
   it("keeps compose tool scenario when switching to ask-all flow", () => {
@@ -842,13 +968,10 @@ describe("stateMachine", () => {
       userId: "u-compose-to-panel",
       text: "Напиши бывшему, что я не хочу продолжать общение."
     });
-    expect(panelComposeCollected.llmTask).toBeUndefined();
-
-    const runPanelCompose = finishConversation(handlers, "u-compose-to-panel", 5);
-    expect(runPanelCompose.llmTask?.mode).toBe("PANEL");
-    expect(runPanelCompose.llmTask?.scenario).toBe("compose");
-    expect(runPanelCompose.state.pendingMode).toBeNull();
-    expect(runPanelCompose.state.pendingPanelScenario).toBeNull();
+    expect(panelComposeCollected.llmTask?.mode).toBe("PANEL");
+    expect(panelComposeCollected.llmTask?.scenario).toBe("compose");
+    expect(panelComposeCollected.state.pendingMode).toBeNull();
+    expect(panelComposeCollected.state.pendingPanelScenario).toBeNull();
   });
 
   it("keeps reply scenario when ask-all is started via panel_start callback", () => {
@@ -877,11 +1000,8 @@ describe("stateMachine", () => {
       userId: "u-reply-callback-panel",
       text: "Он написал: «Ты ведешь себя непрофессионально»."
     });
-    expect(collected.llmTask).toBeUndefined();
-
-    const run = finishConversation(handlers, "u-reply-callback-panel", 5);
-    expect(run.llmTask?.mode).toBe("PANEL");
-    expect(run.llmTask?.scenario).toBe("reply");
+    expect(collected.llmTask?.mode).toBe("PANEL");
+    expect(collected.llmTask?.scenario).toBe("reply");
   });
 
   it("isolates pending modes and scenarios between different users", () => {
@@ -909,14 +1029,11 @@ describe("stateMachine", () => {
       text: "🚀 Спросить всех"
     });
 
-    const collectedA = handlers.handleEvent({
+    const runA = handlers.handleEvent({
       updateId: 3,
       userId: "u-a",
       text: "Она пишет: «где дедлайн?»"
     });
-    expect(collectedA.llmTask).toBeUndefined();
-
-    const runA = finishConversation(handlers, "u-a", 4);
     expect(runA.llmTask?.mode).toBe("SINGLE");
     expect(runA.llmTask?.scenario).toBe("reply");
 
@@ -925,11 +1042,8 @@ describe("stateMachine", () => {
       userId: "u-b",
       text: "Я не понимаю, как выйти из конфликта."
     });
-    expect(collectedB.llmTask).toBeUndefined();
-
-    const runB = finishConversation(handlers, "u-b", 4);
-    expect(runB.llmTask?.mode).toBe("PANEL");
-    expect(runB.llmTask?.scenario).toBeNull();
+    expect(collectedB.llmTask?.mode).toBe("PANEL");
+    expect(collectedB.llmTask?.scenario).toBeNull();
   });
 
   it("enters reply pending mode and triggers SINGLE scenario", () => {
@@ -947,14 +1061,11 @@ describe("stateMachine", () => {
     });
     expect(pending.state.pendingMode).toBe("awaiting_reply_input");
 
-    const collected = handlers.handleEvent({
+    const run = handlers.handleEvent({
       updateId: 3,
       userId: "u-reply",
       text: "Он пишет: «ты меня игнорируешь»."
     });
-    expect(collected.llmTask).toBeUndefined();
-
-    const run = finishConversation(handlers, "u-reply", 4);
     expect(run.llmTask?.mode).toBe("SINGLE");
     expect(run.llmTask?.persona).toBe("max");
     expect(run.llmTask?.scenario).toBe("reply");

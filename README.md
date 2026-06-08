@@ -23,7 +23,8 @@
 - `METRICS_ENABLED`
 
 ### Billing (Tribute)
-- `TRIBUTE_API_SECRET` (webhook HMAC-ключ; если пуст — монетизация отключена, безлимит для всех)
+- `BILLING_ENABLED` (`0` по умолчанию: текущая версия бесплатная; `1` включает монетизацию при заполненном Tribute config)
+- `TRIBUTE_API_SECRET` (webhook HMAC-ключ)
 - `TRIBUTE_LINK_SMALL` (URL пакета 50 сообщений / 299₽)
 - `TRIBUTE_LINK_MEDIUM` (URL пакета 150 / 599₽)
 - `TRIBUTE_LINK_LARGE` (URL пакета 350 / 999₽)

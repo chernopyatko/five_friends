@@ -26,7 +26,7 @@ export function startKeyboard(): InlineKeyboard {
     ],
     [
       { text: "🚀 Спросить всех", data: "panel_start" },
-      { text: "📋 Итоги", data: "summary_now" }
+      { text: "📋 Сводка", data: "summary_now" }
     ]
   ];
 }
@@ -106,9 +106,9 @@ export function panelAfterKeyboard(): InlineKeyboard {
 
 export function mainReplyKeyboard(): ReplyKeyboard {
   return [
-    ["🚀 Спросить всех", "👥 Друзья"],
+    ["🚀 Спросить всех", "📎 Собрать переписку"],
     ["📝 Напиши за меня", "💬 Помоги ответить"],
-    ["📋 Итоги", "❓ Помощь"],
+    ["👥 Друзья", "❓ Помощь"],
     ["⭐ Премиум", "⚙️ Настройки"]
   ];
 }

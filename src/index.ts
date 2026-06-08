@@ -7,6 +7,7 @@ import { Bot, type Context } from "grammy";
 
 import { BalanceStore } from "./billing/balanceStore.js";
 import { loadBillingConfig, type BillingConfig } from "./billing/config.js";
+import { resolveMessageCost } from "./billing/costs.js";
 import { parseTributeWebhookEvent, verifyTributeSignature } from "./billing/tributeWebhook.js";
 import { ReferralService } from "./growth/referral.js";
 import { sanitizeCampaign } from "./growth/sourceAttribution.js";
@@ -72,7 +73,12 @@ export async function main(): Promise<void> {
   const balanceStore = new BalanceStore(store.getDb());
   const billingConfig = loadBillingConfig();
   if (!billingConfig.isConfigured) {
-    const billingDisableReason = !billingConfig.tributeApiSecret ? "TRIBUTE_API_SECRET_MISSING" : "BILLING_CONFIG_INCOMPLETE";
+    const billingDisableReason =
+      billingConfig.isEnabled === false
+        ? "BILLING_DISABLED_BY_FLAG"
+        : !billingConfig.tributeApiSecret
+          ? "TRIBUTE_API_SECRET_MISSING"
+          : "BILLING_CONFIG_INCOMPLETE";
     logger.warn(
       toSafeLog({
         outcome: "startup_billing_disabled",
@@ -150,17 +156,18 @@ export async function main(): Promise<void> {
       "Failed to auto-detect bot username, using BOT_USERNAME env var"
     );
   }
+  const uxHandlers = new UXHandlers({
+    referrals,
+    analytics,
+    firstPanelStateStore: store,
+    adminUserIds,
+    bypassBalanceUserIds,
+    balanceStore,
+    billingConfig,
+    botUsername
+  });
   const runtime = new BotRuntime(
-    new UXHandlers({
-      referrals,
-      analytics,
-      firstPanelStateStore: store,
-      adminUserIds,
-      bypassBalanceUserIds,
-      balanceStore,
-      billingConfig,
-      botUsername
-    }),
+    uxHandlers,
     responder,
     {
       referrals,
@@ -279,7 +286,8 @@ export async function main(): Promise<void> {
       userId,
       billingConfig,
       balanceStore,
-      bypassBalanceUserIds
+      bypassBalanceUserIds,
+      requiredBalance: estimatePaidMediaRequiredBalance(uxHandlers.getState(userId))
     })) {
       await sendMessages(ctx, [{
         text: MEDIA_PAYWALL_TEXT,
@@ -301,7 +309,8 @@ export async function main(): Promise<void> {
       );
       return;
     }
-    const quota = mediaQuota.tryConsume(userId, getVoiceMediaQuotaPoints(ctx.message.voice));
+    const quotaPoints = getVoiceMediaQuotaPoints(ctx.message.voice);
+    const quota = mediaQuota.tryConsume(userId, quotaPoints);
     if (!quota.allowed) {
       await ctx.reply(formatMediaQuotaFailure(quota));
       metrics.increment("updates_total");
@@ -332,6 +341,7 @@ export async function main(): Promise<void> {
         });
       });
     } catch (error) {
+      mediaQuota.refund(userId, quotaPoints);
       metrics.increment("updates_total");
       metrics.increment("updates_message_voice");
       logger.warn(
@@ -435,7 +445,8 @@ export async function main(): Promise<void> {
       userId,
       billingConfig,
       balanceStore,
-      bypassBalanceUserIds
+      bypassBalanceUserIds,
+      requiredBalance: estimatePaidMediaRequiredBalance(uxHandlers.getState(userId))
     })) {
       await sendMessages(ctx, [{
         text: MEDIA_PAYWALL_TEXT,
@@ -457,7 +468,8 @@ export async function main(): Promise<void> {
       );
       return;
     }
-    const quota = mediaQuota.tryConsume(userId, getScreenshotMediaQuotaPoints());
+    const quotaPoints = getScreenshotMediaQuotaPoints();
+    const quota = mediaQuota.tryConsume(userId, quotaPoints);
     if (!quota.allowed) {
       await ctx.reply(formatMediaQuotaFailure(quota));
       metrics.increment("updates_total");
@@ -488,6 +500,7 @@ export async function main(): Promise<void> {
         });
       });
     } catch (error) {
+      mediaQuota.refund(userId, quotaPoints);
       metrics.increment("updates_total");
       metrics.increment("updates_message_photo");
       logger.warn(
@@ -1213,14 +1226,36 @@ interface PaidMediaPreflightInput {
   billingConfig: BillingConfig;
   balanceStore: BalanceStore;
   bypassBalanceUserIds: Set<string>;
+  requiredBalance?: number;
 }
 
 export function getPaidMediaPreflightFailure(input: PaidMediaPreflightInput): PaidMediaPreflightFailure | null {
   if (!input.billingConfig.isConfigured || input.bypassBalanceUserIds.has(input.userId)) {
     return null;
   }
+  const requiredBalance = input.requiredBalance ?? 1;
   input.balanceStore.ensureBalance(input.userId);
-  return input.balanceStore.getBalance(input.userId) < 1 ? "insufficient_balance" : null;
+  return input.balanceStore.getBalance(input.userId) < requiredBalance ? "insufficient_balance" : null;
+}
+
+export function estimatePaidMediaRequiredBalance(
+  state:
+    | {
+        currentPersona: unknown;
+        pendingMode: string | null;
+        pendingAutoPanelFromColdStart?: boolean;
+      }
+    | undefined
+): number {
+  if (state?.pendingAutoPanelFromColdStart === true) {
+    return 1;
+  }
+  const willRunPanel =
+    state === undefined ||
+    state.currentPersona === null ||
+    state.pendingMode === "awaiting_panel_input" ||
+    state.pendingMode === "awaiting_collection_input";
+  return resolveMessageCost(willRunPanel ? "PANEL" : "SINGLE");
 }
 
 interface MediaQuotaState {
@@ -1279,6 +1314,15 @@ export class MediaQuota {
       usedPoints: state.points,
       remainingPoints: Math.max(0, this.maxPoints - state.points)
     };
+  }
+
+  refund(userId: string, points: number): void {
+    const state = this.states.get(userId);
+    if (!state) {
+      return;
+    }
+    state.points = Math.max(0, state.points - normalizeQuotaPoints(points));
+    this.states.set(userId, state);
   }
 }
 

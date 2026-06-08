@@ -8,6 +8,7 @@ import { BalanceStore } from "../src/billing/balanceStore.js";
 import type { BillingConfig } from "../src/billing/config.js";
 import {
   buildGoRedirectResponse,
+  estimatePaidMediaRequiredBalance,
   getLargestPhoto,
   getPaidMediaPreflightFailure,
   getScreenshotMediaQuotaPoints,
@@ -138,6 +139,16 @@ describe("index command parsing", () => {
     expect(quota.tryConsume("u-media", getScreenshotMediaQuotaPoints(), now + 60 * 60 * 1000).allowed).toBe(true);
   });
 
+  it("refunds media quota after recognition failure", () => {
+    const quota = new MediaQuota({ windowMs: 60 * 60 * 1000, maxPoints: 1 });
+    const now = 1_000;
+
+    expect(quota.tryConsume("u-media", 1, now).allowed).toBe(true);
+    expect(quota.tryConsume("u-media", 1, now).allowed).toBe(false);
+    quota.refund("u-media", 1);
+    expect(quota.tryConsume("u-media", 1, now).allowed).toBe(true);
+  });
+
   it("counts voice quota points by rounded-up minutes", () => {
     expect(getVoiceMediaQuotaPoints({ duration: 1 })).toBe(1);
     expect(getVoiceMediaQuotaPoints({ duration: 60 })).toBe(1);
@@ -159,6 +170,8 @@ describe("index command parsing", () => {
       const billingConfig = configuredBillingConfig();
       balanceStore.ensureBalance("u-empty", 0);
       balanceStore.ensureBalance("u-paid", 1);
+      balanceStore.ensureBalance("u-panel-short", 2);
+      balanceStore.ensureBalance("u-panel-ready", 3);
 
       expect(getPaidMediaPreflightFailure({
         userId: "u-empty",
@@ -171,6 +184,20 @@ describe("index command parsing", () => {
         billingConfig,
         balanceStore,
         bypassBalanceUserIds: new Set()
+      })).toBeNull();
+      expect(getPaidMediaPreflightFailure({
+        userId: "u-panel-short",
+        billingConfig,
+        balanceStore,
+        bypassBalanceUserIds: new Set(),
+        requiredBalance: 3
+      })).toBe("insufficient_balance");
+      expect(getPaidMediaPreflightFailure({
+        userId: "u-panel-ready",
+        billingConfig,
+        balanceStore,
+        bypassBalanceUserIds: new Set(),
+        requiredBalance: 3
       })).toBeNull();
       expect(getPaidMediaPreflightFailure({
         userId: "u-empty",
@@ -188,6 +215,27 @@ describe("index command parsing", () => {
       store.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("estimates paid media balance by current UX state", () => {
+    expect(estimatePaidMediaRequiredBalance(undefined)).toBe(3);
+    expect(estimatePaidMediaRequiredBalance({
+      currentPersona: null,
+      pendingMode: null
+    })).toBe(3);
+    expect(estimatePaidMediaRequiredBalance({
+      currentPersona: "yan",
+      pendingMode: null
+    })).toBe(1);
+    expect(estimatePaidMediaRequiredBalance({
+      currentPersona: "yan",
+      pendingMode: "awaiting_collection_input"
+    })).toBe(3);
+    expect(estimatePaidMediaRequiredBalance({
+      currentPersona: null,
+      pendingMode: "awaiting_panel_input",
+      pendingAutoPanelFromColdStart: true
+    })).toBe(1);
   });
 
   it("builds /go redirect page with campaign payload", () => {

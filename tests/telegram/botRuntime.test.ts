@@ -127,17 +127,10 @@ describe("bot runtime hooks", () => {
       text: "все сразу"
     });
 
-    const collected = await runtime.processEvent({
+    const result = await runtime.processEvent({
       updateId: 2,
       userId: "u3",
       text: "моя ситуация"
-    });
-    expect(collected.messages[0]?.text).toContain("Принял 1");
-
-    const result = await runtime.processEvent({
-      updateId: 3,
-      userId: "u3",
-      callbackData: "conversation_done"
     });
 
     expect(result.messages[0]?.text).toContain("Что-то пошло не так");
@@ -160,17 +153,10 @@ describe("bot runtime hooks", () => {
       text: "все сразу"
     });
 
-    const collected = await runtime.processEvent({
+    const result = await runtime.processEvent({
       updateId: 2,
       userId: "u4",
       text: "моя ситуация"
-    });
-    expect(collected.messages[0]?.text).toContain("Принял 1");
-
-    const result = await runtime.processEvent({
-      updateId: 3,
-      userId: "u4",
-      callbackData: "conversation_done"
     });
 
     expect(result.messages).toHaveLength(1);
@@ -237,17 +223,10 @@ describe("bot runtime hooks", () => {
       text: "Напиши за меня"
     });
 
-    const collected = await runtime.processEvent({
+    const result = await runtime.processEvent({
       updateId: 3,
       userId: "u-share",
       text: "Нужно написать коллеге про перенос встречи."
-    });
-    expect(collected.messages[0]?.text).toContain("Принял 1");
-
-    const result = await runtime.processEvent({
-      updateId: 4,
-      userId: "u-share",
-      callbackData: "conversation_done"
     });
 
     expect(result.messages).toHaveLength(2);

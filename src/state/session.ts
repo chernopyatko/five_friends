@@ -3,6 +3,7 @@ export type PanelScenario = "compose" | "reply" | null;
 export type ConversationPartSource = "text" | "voice" | "screenshot";
 export type PendingMode =
   | "awaiting_panel_input"
+  | "awaiting_collection_input"
   | "awaiting_compose_input"
   | "awaiting_reply_input"
   | null;

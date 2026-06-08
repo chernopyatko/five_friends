@@ -10,10 +10,12 @@ export interface BillingConfig {
   tributeApiSecret?: string;
   tributeLinks: TributeLinks;
   productMap: Record<string, number>;
+  isEnabled?: boolean;
   isConfigured: boolean;
 }
 
 export function loadBillingConfig(env: NodeJS.ProcessEnv = process.env): BillingConfig {
+  const isEnabled = parseBillingEnabled(env.BILLING_ENABLED);
   const tributeApiSecret = normalizeEnvValue(env.TRIBUTE_API_SECRET);
   const tributeLinks: TributeLinks = {
     small: validateUrl(env.TRIBUTE_LINK_SMALL),
@@ -23,6 +25,7 @@ export function loadBillingConfig(env: NodeJS.ProcessEnv = process.env): Billing
   const productMap = loadProductMap(normalizeEnvValue(env.TRIBUTE_PRODUCT_MAP));
 
   const isConfigured =
+    isEnabled &&
     Boolean(tributeApiSecret) &&
     Boolean(tributeLinks.small && tributeLinks.medium && tributeLinks.large) &&
     Object.keys(productMap).length > 0;
@@ -31,8 +34,14 @@ export function loadBillingConfig(env: NodeJS.ProcessEnv = process.env): Billing
     tributeApiSecret,
     tributeLinks,
     productMap,
+    isEnabled,
     isConfigured
   };
+}
+
+function parseBillingEnabled(value: string | undefined): boolean {
+  const normalized = normalizeEnvValue(value)?.toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
