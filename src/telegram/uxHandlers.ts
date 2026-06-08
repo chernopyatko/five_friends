@@ -1028,6 +1028,7 @@ export class UXHandlers {
       state.pendingPanelScenario = state.pendingMode === "awaiting_compose_input" ? "compose" : "reply";
       state.pendingMode = "awaiting_panel_input";
       state.pendingAutoPanelFromColdStart = false;
+      this.clearPendingConversation(state);
       this.clearDangerConfirmations(state);
       if (state.pendingPanelScenario === "compose") {
         return {
@@ -1098,6 +1099,7 @@ export class UXHandlers {
       state.pendingMode = "awaiting_panel_input";
       state.pendingPanelScenario = null;
       state.pendingAutoPanelFromColdStart = false;
+      this.clearPendingConversation(state);
       this.clearDangerConfirmations(state);
       return {
         messages: [
@@ -1287,6 +1289,7 @@ export class UXHandlers {
   } {
     const userText = this.consumePendingConversation(state);
     if (!userText) {
+      state.pendingUserText = null;
       return {
         messages: [{
           text: "Пока нечего разбирать. Кинь текст, войс или скрин.",
@@ -1424,6 +1427,7 @@ export class UXHandlers {
 
   private clearPendingConversation(state: UserSessionState): void {
     state.pendingConversationParts = [];
+    state.pendingUserText = null;
   }
 
   private enterPanelInput(state: UserSessionState, userId: string, panelScenario: PanelScenario): void {
@@ -1478,7 +1482,11 @@ export class UXHandlers {
       now
     });
     reset.currentPersona = keptPersona;
-    Object.assign(state, reset);
+    const mutableState = state as unknown as Record<string, unknown>;
+    for (const key of Object.keys(mutableState)) {
+      delete mutableState[key];
+    }
+    Object.assign(mutableState, reset);
   }
 
   private getSettingsKeyboard(userId: string): InlineKeyboard {

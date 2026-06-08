@@ -300,6 +300,74 @@ describe("stateMachine", () => {
     expect(done.llmTask?.userText.length).toBeLessThanOrEqual(24_000);
   });
 
+  it("clears buffered pending text when entering collection and finishing empty", () => {
+    const handlers = new UXHandlers();
+    const userId = "u-empty-collection-clears-buffer";
+
+    const safety = handlers.handleEvent({
+      updateId: 1,
+      userId,
+      text: "мне очень тяжело"
+    });
+    expect(safety.state.pendingUserText).toBe("мне очень тяжело");
+
+    handlers.handleEvent({
+      updateId: 2,
+      userId,
+      callbackData: "safety_resume"
+    });
+
+    const collection = handlers.handleEvent({
+      updateId: 3,
+      userId,
+      text: "📎 Собрать переписку"
+    });
+    expect(collection.state.pendingMode).toBe("awaiting_collection_input");
+    expect(collection.state.pendingUserText).toBeNull();
+
+    const emptyDone = handlers.handleEvent({
+      updateId: 4,
+      userId,
+      callbackData: "conversation_done"
+    });
+    expect(emptyDone.messages[0]?.text).toContain("Пока нечего");
+    expect(emptyDone.state.pendingUserText).toBeNull();
+
+    const persona = handlers.handleEvent({
+      updateId: 5,
+      userId,
+      text: "Ян"
+    });
+    expect(persona.llmTask).toBeUndefined();
+  });
+
+  it("clears buffered pending text when entering ask-all input", () => {
+    const handlers = new UXHandlers();
+    const userId = "u-panel-clears-buffer";
+
+    const safety = handlers.handleEvent({
+      updateId: 1,
+      userId,
+      text: "мне очень тяжело"
+    });
+    expect(safety.state.pendingUserText).toBe("мне очень тяжело");
+
+    handlers.handleEvent({
+      updateId: 2,
+      userId,
+      callbackData: "safety_resume"
+    });
+
+    const panel = handlers.handleEvent({
+      updateId: 3,
+      userId,
+      text: "🚀 Спросить всех"
+    });
+
+    expect(panel.state.pendingMode).toBe("awaiting_panel_input");
+    expect(panel.state.pendingUserText).toBeNull();
+  });
+
   it("runs anonymous text as ask-all immediately when no friend selected", () => {
     const handlers = new UXHandlers();
     const result = handlers.handleEvent({
@@ -1194,6 +1262,7 @@ describe("stateMachine", () => {
       command: "/reset"
     });
     expect(askAgain.messages[0]?.text).toContain("Подтверди сброс");
+    (askAgain.state as unknown as Record<string, unknown>).legacyScratch = "stale";
 
     const confirm = handlers.handleEvent({
       updateId: 4,
@@ -1202,6 +1271,7 @@ describe("stateMachine", () => {
     });
     expect(confirm.sessionReset).toBeDefined();
     expect(confirm.messages[0]?.text).toContain("начнём заново");
+    expect("legacyScratch" in (confirm.state as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it("accepts /start payload and attributes inviter once", () => {
