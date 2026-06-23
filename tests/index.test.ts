@@ -17,6 +17,7 @@ import {
   getVoicePreflightFailure,
   MediaQuota,
   parseSupportedCommand,
+  processCallbackQueryUpdate,
   runWithTypingIndicator,
   toScreenshotTextEvent,
   toVoiceTextEvent
@@ -323,5 +324,56 @@ describe("index command parsing", () => {
     const value = await runWithTypingIndicator(ctx, async () => "ok");
     expect(value).toBe("ok");
     expect(typingCalls).toHaveLength(0);
+  });
+
+  it("answers callback queries before long processing and then sends messages", async () => {
+    const calls: string[] = [];
+
+    const result = await processCallbackQueryUpdate({
+      async answerCallbackQuery() {
+        calls.push("answer");
+      },
+      async processEvent() {
+        calls.push("process");
+        return {
+          messages: [{ text: "ответ от модели" }],
+          state: {} as never
+        };
+      },
+      async sendMessages(messages) {
+        calls.push(`send:${messages[0]?.text}`);
+      }
+    });
+
+    expect(calls).toEqual(["answer", "process", "send:ответ от модели"]);
+    expect(result.messages[0]?.text).toBe("ответ от модели");
+  });
+
+  it("still processes and sends callback result when callback ack fails", async () => {
+    const calls: string[] = [];
+    const errors: unknown[] = [];
+
+    await processCallbackQueryUpdate({
+      async answerCallbackQuery() {
+        calls.push("answer");
+        throw new Error("query is too old");
+      },
+      onAnswerCallbackError(error) {
+        errors.push(error);
+      },
+      async processEvent() {
+        calls.push("process");
+        return {
+          messages: [{ text: "ответ после старого callback" }],
+          state: {} as never
+        };
+      },
+      async sendMessages(messages) {
+        calls.push(`send:${messages[0]?.text}`);
+      }
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(calls).toEqual(["answer", "process", "send:ответ после старого callback"]);
   });
 });

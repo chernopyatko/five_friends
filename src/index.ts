@@ -21,7 +21,7 @@ import { processReminders } from "./scheduler/reminderHandler.js";
 import { SqliteStore } from "./state/store.js";
 import { BotRuntime, PAYWALL_TEXT } from "./telegram/bot.js";
 import { paywallKeyboard, type InlineKeyboard, type ReplyKeyboard } from "./telegram/keyboard.js";
-import { UXHandlers, type IncomingEvent, type OutgoingMessage } from "./telegram/uxHandlers.js";
+import { UXHandlers, type HandleResult, type IncomingEvent, type OutgoingMessage } from "./telegram/uxHandlers.js";
 import { ImageRecognitionError, OpenAIImageRecognizer } from "./telegram/imageRecognition.js";
 import { OpenAIVoiceTranscriber, VoiceTranscriptionError } from "./telegram/voiceTranscription.js";
 import { hashUserId } from "./utils/hashUserId.js";
@@ -561,9 +561,24 @@ export async function main(): Promise<void> {
     }
     const startedAt = Date.now();
     const event = toCallbackEvent(ctx);
-    const result = await runWithTypingIndicator(ctx, () => runtime.processEvent(event));
-    await ctx.answerCallbackQuery();
-    await sendMessages(ctx, result.messages);
+    const result = await processCallbackQueryUpdate({
+      answerCallbackQuery: async () => {
+        await ctx.answerCallbackQuery();
+      },
+      onAnswerCallbackError: (error) => {
+        logger.warn(
+          toSafeLog({
+            requestId: String(ctx.update.update_id),
+            userHash: hashUserId(ctx.from.id),
+            outcome: "callback_answer_failed",
+            details: toTelegramErrorDetails(error)
+          }),
+          "Failed to answer callback query"
+        );
+      },
+      processEvent: () => runWithTypingIndicator(ctx, () => runtime.processEvent(event)),
+      sendMessages: (messages) => sendMessages(ctx, messages)
+    });
 
     metrics.increment("updates_total");
     metrics.increment("updates_callback");
@@ -583,9 +598,7 @@ export async function main(): Promise<void> {
     logger.error(
       toSafeLog({
         outcome: "handler_error",
-        details: {
-          error: error.error instanceof Error ? error.error.name : "unknown"
-        }
+        details: toTelegramErrorDetails(error.error)
       }),
       "Bot handler error"
     );
@@ -1478,6 +1491,24 @@ export async function runWithTypingIndicator<T>(
   }
 }
 
+interface CallbackQueryUpdateInput {
+  answerCallbackQuery: () => Promise<void>;
+  onAnswerCallbackError?: (error: unknown) => void;
+  processEvent: () => Promise<HandleResult>;
+  sendMessages: (messages: OutgoingMessage[]) => Promise<void>;
+}
+
+export async function processCallbackQueryUpdate(input: CallbackQueryUpdateInput): Promise<HandleResult> {
+  try {
+    await input.answerCallbackQuery();
+  } catch (error) {
+    input.onAnswerCallbackError?.(error);
+  }
+  const result = await input.processEvent();
+  await input.sendMessages(result.messages);
+  return result;
+}
+
 function toStartupErrorDetails(error: unknown): Record<string, string> {
   if (error instanceof Error) {
     return {
@@ -1489,6 +1520,36 @@ function toStartupErrorDetails(error: unknown): Record<string, string> {
     errorName: "unknown",
     errorMessage: "unknown"
   };
+}
+
+function toTelegramErrorDetails(
+  error: unknown
+): Record<string, string | number | boolean | null | undefined> {
+  const details: Record<string, string | number | boolean | null | undefined> = {
+    errorName: error instanceof Error ? error.name : "unknown",
+    errorMessage: error instanceof Error ? error.message : "unknown"
+  };
+
+  if (typeof error !== "object" || error === null) {
+    return details;
+  }
+
+  const record = error as Record<string, unknown>;
+  details.description = typeof record.description === "string" ? record.description : undefined;
+  details.errorCode =
+    typeof record.error_code === "number"
+      ? record.error_code
+      : typeof record.errorCode === "number"
+        ? record.errorCode
+        : undefined;
+
+  const parameters = record.parameters;
+  if (typeof parameters === "object" && parameters !== null) {
+    const retryAfter = (parameters as Record<string, unknown>).retry_after;
+    details.retryAfter = typeof retryAfter === "number" ? retryAfter : undefined;
+  }
+
+  return details;
 }
 
 function safeCompareHeader(received: string | undefined, expected: string): boolean {
